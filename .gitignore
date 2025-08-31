@@ -66,3 +66,39 @@ pkg/testutils/serverutils/*_generated.go
 .DS_Store
 .idea/
 .vscode/
+
+# Local-specific files for development environment
+# Database dumps and exports
+supabase_dump*.sql
+*.sql
+
+# Local database instance data
+node1/
+node*/
+cockroach-data/
+
+# Local log files
+fetch-*.log
+*.log
+
+# Local development scripts
+clean_dump.sh
+*.sh
+
+# Local binaries and executables
+molt
+dev
+cockroach
+
+# CPU profiling output
+cpu.out
+
+# Local temporary files
+*.tmp
+*.temp
+
+# Local documentation and guides
+cockroachdb_setup_guide.md
+
+# Local IDE/editor files
+*.sln
