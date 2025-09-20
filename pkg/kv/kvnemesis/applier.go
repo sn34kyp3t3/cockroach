@@ -105,10 +105,15 @@ func exceptDelRangeUsingTombstoneStraddlesRangeBoundary(err error) bool {
 	return errors.Is(err, errDelRangeUsingTombstoneStraddlesRangeBoundary)
 }
 
+func exceptConditionFailed(err error) bool {
+	return errors.HasType(err, (*kvpb.ConditionFailedError)(nil))
+}
+
 func applyOp(ctx context.Context, env *Env, db *kv.DB, op *Operation) {
 	switch o := op.GetValue().(type) {
 	case *GetOperation,
 		*PutOperation,
+		*CPutOperation,
 		*ScanOperation,
 		*BatchOperation,
 		*DeleteOperation,
@@ -330,11 +335,32 @@ func applyClientOp(
 		}
 	case *PutOperation:
 		_, ts, err := dbRunWithResultAndTimestamp(ctx, db, func(b *kv.Batch) {
-			b.Put(o.Key, o.Value())
+			if o.MustAcquireExclusiveLock {
+				b.PutMustAcquireExclusiveLock(o.Key, o.Value())
+			} else {
+				b.Put(o.Key, o.Value())
+			}
 			setLastReqSeq(b, o.Seq)
 		})
 		o.Result = resultInit(ctx, err)
 		if err != nil {
+			return
+		}
+		o.Result.OptionalTimestamp = ts
+	case *CPutOperation:
+		_, ts, err := dbRunWithResultAndTimestamp(ctx, db, func(b *kv.Batch) {
+			expVal := roachpb.MakeValueFromBytes(o.ExpVal)
+			if o.AllowIfDoesNotExist {
+				b.CPutAllowingIfNotExists(o.Key, o.Value(), expVal.TagAndDataBytes())
+			} else {
+				b.CPut(o.Key, o.Value(), expVal.TagAndDataBytes())
+			}
+			setLastReqSeq(b, o.Seq)
+		})
+		o.Result = resultInit(ctx, err)
+		// If the CPut failed with ConditionFailedError, we still want to record the
+		// timestamp and do some validation later.
+		if err != nil && !exceptConditionFailed(err) {
 			return
 		}
 		o.Result.OptionalTimestamp = ts
@@ -381,7 +407,11 @@ func applyClientOp(
 		}
 	case *DeleteOperation:
 		res, ts, err := dbRunWithResultAndTimestamp(ctx, db, func(b *kv.Batch) {
-			b.Del(o.Key)
+			if o.MustAcquireExclusiveLock {
+				b.DelMustAcquireExclusiveLock(o.Key)
+			} else {
+				b.Del(o.Key)
+			}
 			setLastReqSeq(b, o.Seq)
 		})
 		o.Result = resultInit(ctx, err)
@@ -547,7 +577,19 @@ func applyBatchOp(
 				b.Get(subO.Key)
 			}
 		case *PutOperation:
-			b.Put(subO.Key, subO.Value())
+			if subO.MustAcquireExclusiveLock {
+				b.PutMustAcquireExclusiveLock(subO.Key, subO.Value())
+			} else {
+				b.Put(subO.Key, subO.Value())
+			}
+			setLastReqSeq(b, subO.Seq)
+		case *CPutOperation:
+			expVal := roachpb.MakeValueFromBytes(subO.ExpVal)
+			if subO.AllowIfDoesNotExist {
+				b.CPutAllowingIfNotExists(subO.Key, subO.Value(), expVal.TagAndDataBytes())
+			} else {
+				b.CPut(subO.Key, subO.Value(), expVal.TagAndDataBytes())
+			}
 			setLastReqSeq(b, subO.Seq)
 		case *ScanOperation:
 			if subO.SkipLocked {
@@ -575,7 +617,11 @@ func applyBatchOp(
 				}
 			}
 		case *DeleteOperation:
-			b.Del(subO.Key)
+			if subO.MustAcquireExclusiveLock {
+				b.DelMustAcquireExclusiveLock(subO.Key)
+			} else {
+				b.Del(subO.Key)
+			}
 			setLastReqSeq(b, subO.Seq)
 		case *DeleteRangeOperation:
 			b.DelRange(subO.Key, subO.EndKey, true /* returnKeys */)
@@ -589,6 +635,9 @@ func applyBatchOp(
 			panic(errors.AssertionFailedf(`Barrier cannot be used in batches`))
 		case *FlushLockTableOperation:
 			panic(errors.AssertionFailedf(`FlushLockOperation cannot be used in batches`))
+		case *MutateBatchHeaderOperation:
+			b.Header.MaxSpanRequestKeys = subO.MaxSpanRequestKeys
+			b.Header.TargetBytes = subO.TargetBytes
 		default:
 			panic(errors.AssertionFailedf(`unknown batch operation type: %T %v`, subO, subO))
 		}
@@ -599,57 +648,80 @@ func applyBatchOp(
 	// to each result.
 	err = nil
 	o.Result.OptionalTimestamp = ts
+	resultIdx := 0
 	for i := range o.Ops {
 		switch subO := o.Ops[i].GetValue().(type) {
 		case *GetOperation:
-			if b.Results[i].Err != nil {
-				subO.Result = resultInit(ctx, b.Results[i].Err)
+			res := b.Results[resultIdx]
+			if res.Err != nil {
+				subO.Result = resultInit(ctx, res.Err)
 			} else {
-				subO.Result.Type = ResultType_Value
-				result := b.Results[i].Rows[0]
-				if result.Value != nil {
-					subO.Result.Value = result.Value.RawBytes
+				if res.ResumeSpan != nil {
+					subO.Result.Type = ResultType_NoError
 				} else {
-					subO.Result.Value = nil
+					subO.Result.Type = ResultType_Value
+					result := res.Rows[0]
+					if result.Value != nil {
+						subO.Result.Value = result.Value.RawBytes
+					} else {
+						subO.Result.Value = nil
+					}
 				}
 			}
+			subO.Result.ResumeSpan = res.ResumeSpan
 		case *PutOperation:
-			err := b.Results[i].Err
-			subO.Result = resultInit(ctx, err)
+			res := b.Results[resultIdx]
+			subO.Result = resultInit(ctx, res.Err)
+			subO.Result.ResumeSpan = res.ResumeSpan
+		case *CPutOperation:
+			res := b.Results[resultIdx]
+			subO.Result = resultInit(ctx, res.Err)
+			subO.Result.ResumeSpan = res.ResumeSpan
 		case *ScanOperation:
-			kvs, err := b.Results[i].Rows, b.Results[i].Err
-			if err != nil {
-				subO.Result = resultInit(ctx, err)
+			res := b.Results[resultIdx]
+			if res.Err != nil {
+				subO.Result = resultInit(ctx, res.Err)
 			} else {
 				subO.Result.Type = ResultType_Values
-				subO.Result.Values = make([]KeyValue, len(kvs))
-				for j, kv := range kvs {
+				subO.Result.Values = make([]KeyValue, len(res.Rows))
+				for j, kv := range res.Rows {
 					subO.Result.Values[j] = KeyValue{
 						Key:   []byte(kv.Key),
 						Value: kv.Value.RawBytes,
 					}
 				}
 			}
+			subO.Result.ResumeSpan = res.ResumeSpan
 		case *DeleteOperation:
-			err := b.Results[i].Err
-			subO.Result = resultInit(ctx, err)
+			res := b.Results[resultIdx]
+			subO.Result = resultInit(ctx, res.Err)
+			subO.Result.ResumeSpan = res.ResumeSpan
 		case *DeleteRangeOperation:
-			keys, err := b.Results[i].Keys, b.Results[i].Err
-			if err != nil {
-				subO.Result = resultInit(ctx, err)
+			res := b.Results[resultIdx]
+			if res.Err != nil {
+				subO.Result = resultInit(ctx, res.Err)
 			} else {
 				subO.Result.Type = ResultType_Keys
-				subO.Result.Keys = make([][]byte, len(keys))
-				for j, key := range keys {
+				subO.Result.Keys = make([][]byte, len(res.Keys))
+				for j, key := range res.Keys {
 					subO.Result.Keys[j] = key
 				}
 			}
+			subO.Result.ResumeSpan = res.ResumeSpan
 		case *DeleteRangeUsingTombstoneOperation:
-			subO.Result = resultInit(ctx, err)
+			res := b.Results[resultIdx]
+			subO.Result = resultInit(ctx, res.Err)
+			subO.Result.ResumeSpan = res.ResumeSpan
+		case *MutateBatchHeaderOperation:
+			// NB: MutateBatchHeaderOperation cannot fail.
+			subO.Result = resultInit(ctx, nil)
 		case *AddSSTableOperation:
 			panic(errors.AssertionFailedf(`AddSSTable cannot be used in batches`))
 		default:
 			panic(errors.AssertionFailedf(`unknown batch operation type: %T %v`, subO, subO))
+		}
+		if o.Ops[i].OperationHasResultInBatch() {
+			resultIdx++
 		}
 	}
 }

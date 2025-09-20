@@ -333,6 +333,10 @@ func makeTestConfigFromParams(params base.TestServerArgs) Config {
 		cfg.TestingKnobs.AdmissionControlOptions = &admission.Options{}
 	}
 
+	if params.DefaultDRPCOption == base.TestDRPCEnabled {
+		rpcbase.ExperimentalDRPCEnabled.Override(context.Background(), &st.SV, true)
+	}
+
 	return cfg
 }
 
@@ -1886,7 +1890,7 @@ func ExpectedInitialRangeCount(
 	defaultZoneConfig *zonepb.ZoneConfig,
 	defaultSystemZoneConfig *zonepb.ZoneConfig,
 ) (int, error) {
-	_, splits := bootstrap.MakeMetadataSchema(codec, defaultZoneConfig, defaultSystemZoneConfig).GetInitialValues()
+	_, splits := bootstrap.MakeMetadataSchema(codec, defaultZoneConfig, defaultSystemZoneConfig, bootstrap.NoOffset).GetInitialValues()
 	// N splits means N+1 ranges.
 	return len(config.StaticSplits()) + len(splits) + 1, nil
 }
@@ -2636,7 +2640,7 @@ func (ts *testServer) RPCClientConn(
 func (ts *testServer) RPCClientConnE(user username.SQLUsername) (serverutils.RPCConn, error) {
 	ctx := context.Background()
 	rpcCtx := ts.NewClientRPCContext(ctx, user)
-	if !rpcbase.TODODRPC {
+	if !rpcbase.DRPCEnabled(ctx, rpcCtx.Settings) {
 		conn, err := rpcCtx.GRPCDialNode(ts.AdvRPCAddr(), ts.NodeID(), ts.Locality(), rpcbase.DefaultClass).Connect(ctx)
 		if err != nil {
 			return nil, err
@@ -2688,7 +2692,7 @@ func (t *testTenant) RPCClientConn(
 func (t *testTenant) RPCClientConnE(user username.SQLUsername) (serverutils.RPCConn, error) {
 	ctx := context.Background()
 	rpcCtx := t.NewClientRPCContext(ctx, user)
-	if !rpcbase.TODODRPC {
+	if !rpcbase.DRPCEnabled(ctx, rpcCtx.Settings) {
 		conn, err := rpcCtx.GRPCDialPod(t.AdvRPCAddr(), t.SQLInstanceID(), t.Locality(), rpcbase.DefaultClass).Connect(ctx)
 		if err != nil {
 			return nil, err

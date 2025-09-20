@@ -161,11 +161,11 @@ func maybeStartCompactionJob(
 		if err != nil {
 			return err
 		}
-		idDatum, ok := tree.AsDInt(datums[0])
+		idDatum, ok := datums[0].(*tree.DInt)
 		if !ok {
 			return errors.Newf("expected job ID: unexpected result type %T", datums[0])
 		}
-		jobID = jobspb.JobID(idDatum)
+		jobID = jobspb.JobID(*idDatum)
 
 		scheduledJob := jobs.ScheduledJobTxn(txn)
 		backupSchedule, args, err := getScheduledBackupExecutionArgsFromSchedule(
@@ -745,17 +745,6 @@ func getBackupChain(
 			log.Dev.Warningf(ctx, "failed to cleanup base backup stores: %+v", err)
 		}
 	}()
-	incStores, incCleanup, err := backupdest.MakeBackupDestinationStores(
-		ctx, user, mkStore, resolvedIncDirs,
-	)
-	if err != nil {
-		return nil, nil, nil, nil, err
-	}
-	defer func() {
-		if err := incCleanup(); err != nil {
-			log.Dev.Warningf(ctx, "failed to cleanup incremental backup stores: %+v", err)
-		}
-	}()
 	baseEncryptionInfo := encryptionOpts
 	if encryptionOpts != nil && !encryptionOpts.HasKey() {
 		baseEncryptionInfo, err = backupencryption.GetEncryptionFromBaseStore(
@@ -770,9 +759,9 @@ func getBackupChain(
 	defer mem.Close(ctx)
 
 	_, manifests, localityInfo, memReserved, err := backupdest.ResolveBackupManifests(
-		ctx, execCfg, &mem, defaultCollectionURI, baseStores, incStores, mkStore, resolvedSubdir,
+		ctx, execCfg, &mem, defaultCollectionURI, dest.To, mkStore, resolvedSubdir,
 		resolvedBaseDirs, resolvedIncDirs, endTime, baseEncryptionInfo, kmsEnv,
-		user, false /*includeSkipped */, true, /*includeCompacted */
+		user, false /*includeSkipped */, true /*includeCompacted */, len(dest.IncrementalStorage) > 0,
 	)
 	if err != nil {
 		return nil, nil, nil, nil, err
@@ -804,15 +793,13 @@ func concludeBackupCompaction(
 	backupID := uuid.MakeV4()
 	backupManifest.ID = backupID
 
-	if err := backupinfo.WriteBackupManifest(ctx, store, backupbase.BackupManifestName,
+	if err := backupinfo.WriteBackupManifest(ctx, store, backupbase.DeprecatedBackupManifestName,
 		details.EncryptionOptions, kmsEnv, backupManifest); err != nil {
 		return err
 	}
-	if backupinfo.WriteMetadataWithExternalSSTsEnabled.Get(&execCtx.ExecCfg().Settings.SV) {
-		if err := backupinfo.WriteMetadataWithExternalSSTs(ctx, store, details.EncryptionOptions,
-			kmsEnv, backupManifest); err != nil {
-			return err
-		}
+	if err := backupinfo.WriteMetadataWithExternalSSTs(ctx, store, details.EncryptionOptions,
+		kmsEnv, backupManifest); err != nil {
+		return err
 	}
 
 	statsTable := getTableStatsForBackup(ctx, execCtx.ExecCfg().InternalDB.Executor(), backupManifest.Descriptors)
@@ -829,6 +816,7 @@ func concludeBackupCompaction(
 			execCtx.User(),
 			execCtx.ExecCfg().DistSQLSrv.ExternalStorageFromURI,
 			details,
+			backupManifest.RevisionStartTime,
 		),
 		"writing backup index metadata",
 	)

@@ -82,6 +82,7 @@ define ApplyJoin {
     RightColumns colinfo.ResultColumns
     OnCond tree.TypedExpr
     PlanRightSideFn exec.ApplyJoinPlanRightSideFn
+    RightSideForExplainFn exec.ApplyJoinRightSideForExplainFn
 }
 
 # HashJoin runs a hash-join between the results of two input nodes.
@@ -808,6 +809,9 @@ define CancelSessions {
 # CreateStatistics implements CREATE STATISTICS.
 define CreateStatistics {
     Cs *tree.CreateStats
+    Table cat.Table
+    Index cat.Index
+    WhereConstraint *constraint.Constraint
 }
 
 # Export implements EXPORT.

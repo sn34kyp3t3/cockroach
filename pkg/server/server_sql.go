@@ -172,6 +172,7 @@ type SQLServer struct {
 	statsRefresher                 *stats.Refresher
 	temporaryObjectCleaner         *sql.TemporaryObjectCleaner
 	stmtDiagnosticsRegistry        *stmtdiagnostics.Registry
+	txnDiagnosticsRegistry         *stmtdiagnostics.TxnRegistry
 	sqlLivenessSessionID           sqlliveness.SessionID
 	sqlLivenessProvider            sqlliveness.Provider
 	sqlInstanceReader              *instancestorage.Reader
@@ -1257,6 +1258,10 @@ func newSQLServer(ctx context.Context, cfg sqlServerArgs) (*SQLServer, error) {
 	)
 	execCfg.StmtDiagnosticsRecorder = stmtDiagnosticsRegistry
 
+	txnDiagnosticsRegistry := stmtdiagnostics.NewTxnRegistry(cfg.internalDB,
+		cfg.Settings, stmtDiagnosticsRegistry, timeutil.DefaultTimeSource{})
+	execCfg.TxnDiagnosticsRecorder = txnDiagnosticsRegistry
+
 	var upgradeMgr *upgrademanager.Manager
 	{
 		var c upgrade.Cluster
@@ -1270,6 +1275,7 @@ func newSQLServer(ctx context.Context, cfg sqlServerArgs) (*SQLServer, error) {
 				Dialer:           cfg.kvNodeDialer,
 				RangeDescScanner: rangedesc.NewScanner(cfg.db),
 				DB:               cfg.db,
+				Settings:         cfg.Settings,
 			})
 		} else {
 			c = upgradecluster.NewTenantCluster(
@@ -1277,6 +1283,7 @@ func newSQLServer(ctx context.Context, cfg sqlServerArgs) (*SQLServer, error) {
 					Dialer:         cfg.sqlInstanceDialer,
 					InstanceReader: cfg.sqlInstanceReader,
 					DB:             cfg.db,
+					Settings:       cfg.Settings,
 				})
 		}
 		systemDeps = upgrade.SystemDeps{
@@ -1432,6 +1439,7 @@ func newSQLServer(ctx context.Context, cfg sqlServerArgs) (*SQLServer, error) {
 		statsRefresher:                 statsRefresher,
 		temporaryObjectCleaner:         temporaryObjectCleaner,
 		stmtDiagnosticsRegistry:        stmtDiagnosticsRegistry,
+		txnDiagnosticsRegistry:         txnDiagnosticsRegistry,
 		sqlLivenessProvider:            cfg.sqlLivenessProvider,
 		sqlInstanceStorage:             cfg.sqlInstanceStorage,
 		sqlInstanceReader:              cfg.sqlInstanceReader,
@@ -1762,7 +1770,9 @@ func (s *SQLServer) preStart(
 	if err := s.statsRefresher.Start(ctx, stopper, stats.DefaultRefreshInterval); err != nil {
 		return err
 	}
-	s.stmtDiagnosticsRegistry.Start(ctx, stopper)
+
+	stmtdiagnostics.StartPolling(ctx, s.txnDiagnosticsRegistry, s.stmtDiagnosticsRegistry, stopper)
+
 	if err := s.execCfg.TableStatsCache.Start(ctx, s.execCfg.Codec, s.execCfg.RangeFeedFactory); err != nil {
 		return err
 	}

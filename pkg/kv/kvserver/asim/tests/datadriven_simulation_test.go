@@ -8,11 +8,11 @@ package tests
 import (
 	"context"
 	"fmt"
-	"hash"
 	"hash/fnv"
 	"math/rand"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -35,8 +35,10 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/util/humanizeutil"
 	"github.com/cockroachdb/cockroach/pkg/util/leaktest"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
+	"github.com/cockroachdb/cockroach/pkg/util/tracing/tracingpb"
 	"github.com/cockroachdb/datadriven"
 	"github.com/cockroachdb/logtags"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -165,6 +167,12 @@ var runAsimTests = envutil.EnvOrDefaultBool("COCKROACH_RUN_ASIM_TESTS", false)
 //     random number generator that creates the seed used to generate each
 //     simulation sample. The default values are: duration=30m (30 minutes)
 //     samples=1 seed=random.
+//
+// To run all tests and rewrite the testdata files as well as generate the
+// artifacts in `testdata/generated`, you can use:
+/*
+./dev test pkg/kv/kvserver/asim/tests --ignore-cache --rewrite -v -f TestDataDriven -- --test_env COCKROACH_RUN_ASIM_TESTS=true --test_env COCKROACH_ALWAYS_KEEP_TEST_LOGS=true
+*/
 func TestDataDriven(t *testing.T) {
 	skip.UnderDuressWithIssue(t, 149875)
 	leakTestAfter := leaktest.AfterTest(t)
@@ -313,8 +321,8 @@ func TestDataDriven(t *testing.T) {
 			case "gen_cluster":
 				var nodes = 3
 				var storesPerNode = 1
-				var storeByteCapacity int64 = 256 << 30 /* 256 GiB  */
-				var nodeCPURateCapacity int64 = 8 * 1e9 // 8 vcpus
+				var storeByteCapacity int64 = 256 << 30                                /* 256 GiB  */
+				var nodeCPURateCapacity int64 = config.DefaultNodeCPURateCapacityNanos // 8 vcpus
 				var region []string
 				var nodesPerRegion []int
 				scanIfExists(t, d, "nodes", &nodes)
@@ -444,11 +452,15 @@ func TestDataDriven(t *testing.T) {
 				return ""
 			case "eval":
 				samples := 1
+				full := false
 				// We use a fixed seed to ensure determinism in the simulated data.
 				// Multiple samples can be used for more coverage.
 				seed := int64(42)
 				duration := 30 * time.Minute
 				name := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+				plotDir := datapathutils.TestDataPath(t, "generated", name)
+				var rewrite bool
+				require.NoError(t, sniffarg.DoEnv("rewrite", &rewrite))
 				var cfgs []string    // configurations to run the simulation with
 				var metrics []string // metrics to summarize
 
@@ -457,13 +469,14 @@ func TestDataDriven(t *testing.T) {
 				scanIfExists(t, d, "seed", &seed)
 				scanIfExists(t, d, "cfgs", &cfgs)
 				scanIfExists(t, d, "metrics", &metrics)
+				scanIfExists(t, d, "full", &full)
 
 				t.Logf("running eval for %s", name)
 
 				if len(cfgs) == 0 {
 					// TODO(tbg): force each test to specify the configs it wants to run
 					// under.
-					cfgs = []string{"default"}
+					cfgs = []string{"sma-count"}
 				}
 
 				metricsMap := map[string]struct{}{}
@@ -475,12 +488,7 @@ func TestDataDriven(t *testing.T) {
 				require.NotZero(t, rangeGen)
 
 				knownConfigurations := map[string]func(eg *gen.StaticEvents){
-					// In default mode, the test manages its rebalancer-related settings
-					// manually.
-					"default": func(*gen.StaticEvents) {},
-					// 'mma-only' runs with the multi-metric allocator and turns off the
-					// replicate and lease queues.
-					"sma-only": func(eg *gen.StaticEvents) {
+					"sma-count": func(eg *gen.StaticEvents) {
 						eg.ScheduleEvent(settingsGen.Settings.StartTime, 0,
 							event.SetSimulationSettingsEvent{
 								IsClusterSetting: true,
@@ -488,29 +496,32 @@ func TestDataDriven(t *testing.T) {
 								Value:            int64(kvserverbase.LBRebalancingLeasesAndReplicas),
 							})
 					},
+					// 'mma-only' runs with the multi-metric allocator and turns off the
+					// replicate and lease queues.
 					"mma-only": func(eg *gen.StaticEvents) {
-						settingsGen.Settings.ReplicateQueueEnabled = false
-						settingsGen.Settings.LeaseQueueEnabled = false
 						eg.ScheduleEvent(settingsGen.Settings.StartTime, 0,
 							event.SetSimulationSettingsEvent{
 								IsClusterSetting: true,
 								Key:              "LBRebalancingMode",
-								Value:            int64(kvserverbase.LBRebalancingMultiMetric),
+								Value:            int64(kvserverbase.LBRebalancingMultiMetricOnly),
 							})
 					},
 					// Both the replicate/lease queues and the MMA are enabled.
-					"both": func(eg *gen.StaticEvents) {
-						settingsGen.Settings.ReplicateQueueEnabled = true
-						settingsGen.Settings.LeaseQueueEnabled = true
+					"mma-and-count": func(eg *gen.StaticEvents) {
 						eg.ScheduleEvent(settingsGen.Settings.StartTime, 0,
 							event.SetSimulationSettingsEvent{
 								IsClusterSetting: true,
 								Key:              "LBRebalancingMode",
-								Value:            int64(kvserverbase.LBRebalancingMultiMetric),
+								Value:            int64(kvserverbase.LBRebalancingMultiMetricAndCount),
 							})
 					},
 				}
 				var buf strings.Builder
+				// stateStrForOnce stores the string representation of the cluster and
+				// workload setup used in this test setup. The event will only include
+				// the first LBRebalancingMode configuration since this string is only
+				// generated for once at the start.
+				var stateStrForOnce string
 				for _, mv := range cfgs {
 					t.Run(mv, func(t *testing.T) {
 						ctx := logtags.AddTag(context.Background(), "name", name+"/"+mv)
@@ -528,13 +539,46 @@ func TestDataDriven(t *testing.T) {
 						require.NotNil(t, set, "unknown mode value: %s", mv)
 						set(&eventGen)
 
+						// TODO(tbg): need to decide whether multiple evals in a single file
+						// is a feature or an anti-pattern. If it's a feature, we should let
+						// the `name` part below be adjustable (but not the plotDir) via a
+						// parameter to the `eval` command.
+						testName := name + "_" + mv
+
 						for sample := 0; sample < samples; sample++ {
+							recIdx := map[int64]int{}
+							settingsGen.Settings.OnRecording = func(storeID int64, rec tracingpb.Recording) {
+								if !rewrite || len(rec[0].Logs) == 0 {
+									return
+								}
+								traceDir := filepath.Join(plotDir, "traces", fmt.Sprintf("s%d", storeID))
+								if recIdx[storeID] == 0 {
+									require.NoError(t, os.MkdirAll(traceDir, 0755))
+								}
+								re := regexp.MustCompile(`[^a-zA-Z0-9]+`)
+								outName := fmt.Sprintf("%s_%s_s%d", mv, re.ReplaceAllString(rec[0].Operation, "_"), storeID)
+								if sample > 0 {
+									outName += fmt.Sprintf("_sample%d", sample+1)
+								}
+								outName += "_" + fmt.Sprintf("%03d.txt", recIdx[storeID])
+								assert.NoError(t, os.WriteFile(
+									filepath.Join(traceDir, outName),
+									[]byte(rec.String()), 0644))
+								recIdx[storeID] += 1
+							}
+
 							assertionFailures := []string{}
+							var tmpStrB *strings.Builder = nil
+							if stateStrForOnce == "" {
+								tmpStrB = &strings.Builder{}
+							}
 							simulator := gen.GenerateSimulation(
 								duration, clusterGen, rangeGen, loadGen,
-								settingsGen, eventGen, seedGen.Int63(),
+								settingsGen, eventGen, seedGen.Int63(), tmpStrB, "\t",
 							)
-							run.stateStrAcrossSamples = append(run.stateStrAcrossSamples, simulator.State().String())
+							if stateStrForOnce == "" {
+								stateStrForOnce = tmpStrB.String()
+							}
 							simulator.RunSim(ctx)
 							h := simulator.History()
 							run.hs = append(run.hs, h)
@@ -551,21 +595,11 @@ func TestDataDriven(t *testing.T) {
 
 						// Generate artifacts. Hash artifact input data to ensure they are
 						// up to date.
-						var rewrite bool
-						require.NoError(t, sniffarg.DoEnv("rewrite", &rewrite))
-						plotDir := datapathutils.TestDataPath(t, "generated", name)
 						hasher := fnv.New64a()
-						// TODO(tbg): need to decide whether multiple evals in a single file
-						// is a feature or an anti-pattern. If it's a feature, we should let
-						// the `name` part below be adjustable (but not the plotDir) via a
-						// parameter to the `eval` command.
-						testName := name + "_" + mv
+
 						for sample, h := range run.hs {
-							generateAllPlots(t, &buf, h, testName, sample+1, plotDir, hasher, rewrite,
+							printStatsAndGenerateJSON(t, &buf, h, testName, sample+1, plotDir, hasher, rewrite,
 								settingsGen.Settings.TickInterval, metricsMap)
-							generateTopology(t, h,
-								filepath.Join(plotDir, fmt.Sprintf("%s_%d_topology.txt", testName, sample+1)),
-								hasher, rewrite)
 						}
 						artifactsHash := hasher.Sum64()
 
@@ -578,7 +612,13 @@ func TestDataDriven(t *testing.T) {
 									sample+1, failString)
 							}
 						}
+						_, _ = fmt.Fprint(&buf, "==========================\n")
 					})
+				}
+				writeStateStrToFile(t, filepath.Join(plotDir, fmt.Sprintf("%s_setup.txt", name)), stateStrForOnce, rewrite)
+				if full {
+					_, _ = fmt.Fprintf(&buf, "%v\n", stateStrForOnce)
+					_, _ = fmt.Fprint(&buf, "==========================\n")
 				}
 				return buf.String()
 			case "assertion":
@@ -587,23 +627,35 @@ func TestDataDriven(t *testing.T) {
 				var ticks int
 				scanMustExist(t, d, "type", &typ)
 
+				var buf strings.Builder
 				switch typ {
 				case "balance":
 					scanMustExist(t, d, "stat", &stat)
 					scanMustExist(t, d, "ticks", &ticks)
+					threshold := scanThreshold(t, d)
 					assertions = append(assertions, assertion.BalanceAssertion{
 						Ticks:     ticks,
 						Stat:      stat,
-						Threshold: scanThreshold(t, d),
+						Threshold: threshold,
 					})
+					_, _ = fmt.Fprintf(&buf, "asserting: max_{stores}(%s)/mean_{stores}(%s) %s %.2f at each of last %d ticks",
+						stat, stat, threshold.ThresholdType, threshold.Value, ticks)
+					// ^-- the max and mean are taken over the stores (with the tick fixed).
 				case "steady":
 					scanMustExist(t, d, "stat", &stat)
 					scanMustExist(t, d, "ticks", &ticks)
+					threshold := scanThreshold(t, d)
 					assertions = append(assertions, assertion.SteadyStateAssertion{
 						Ticks:     ticks,
 						Stat:      stat,
-						Threshold: scanThreshold(t, d),
+						Threshold: threshold,
 					})
+					_, _ = fmt.Fprintf(&buf, "asserting: |%s(t)/mean_{T}(%s) - 1| %s %.2f ∀ t∈T and each store ("+
+						"T=last %d ticks)",
+						stat, stat, threshold.ThresholdType, threshold.Value, ticks)
+					// ^-- the mean is taken over the ticks (and the check runs for each store).
+					// These assertions are for "checking that change stops" (vs. balance
+					// assertions, which verify that stores are close together on some metric).
 				case "stat":
 					var stores []int
 					scanMustExist(t, d, "stat", &stat)
@@ -640,7 +692,7 @@ func TestDataDriven(t *testing.T) {
 				default:
 					panic("unknown assertion: " + typ)
 				}
-				return ""
+				return buf.String()
 			case "setting":
 				// NB: delay could be supported for the below settings,
 				// but it hasn't been needed yet.
@@ -679,23 +731,13 @@ func TestDataDriven(t *testing.T) {
 }
 
 type modeHistory struct {
-	mode                  string
-	hs                    []history.History
-	stateStrAcrossSamples []string
+	mode string
+	hs   []history.History
 }
 
-func generateTopology(
-	t *testing.T, h history.History, topFile string, hasher hash.Hash, rewrite bool,
-) {
-	// TODO(tbg): this can in principle be printed without even
-	// evaluating the test, and in particular it's independent of
-	// settings. It seems like an artifact of the implementation
-	// that we can only access the structured topology after the
-	// simulation has run.
-	top := h.S.Topology()
-	s := top.String()
-	_, _ = fmt.Fprint(hasher, s)
+// writeStateStrToFile writes the state string to the given file.
+func writeStateStrToFile(t *testing.T, topFile string, stateStr string, rewrite bool) {
 	if rewrite {
-		require.NoError(t, os.WriteFile(topFile, []byte(s), 0644))
+		require.NoError(t, os.WriteFile(topFile, []byte(stateStr), 0644))
 	}
 }

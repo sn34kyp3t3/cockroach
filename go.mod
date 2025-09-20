@@ -124,6 +124,7 @@ require (
 	github.com/aws/smithy-go v1.22.3
 	github.com/axiomhq/hyperloglog v0.2.5
 	github.com/bazelbuild/rules_go v0.26.0
+	github.com/binxio/gcloudconfig v0.1.5
 	github.com/biogo/store v0.0.0-20160505134755-913427a1d5e8
 	github.com/blevesearch/snowballstem v0.9.0
 	github.com/buchgr/bazel-remote v1.3.3
@@ -135,13 +136,13 @@ require (
 	github.com/cockroachdb/cmux v0.0.0-20250514152509-914d3bf9ec58
 	github.com/cockroachdb/cockroach-go/v2 v2.4.1
 	github.com/cockroachdb/crlfmt v0.0.0-20221214225007-b2fc5c302548
-	github.com/cockroachdb/crlib v0.0.0-20250718215705-7ff5051265b9
-	github.com/cockroachdb/datadriven v1.0.3-0.20250407164829-2945557346d5
+	github.com/cockroachdb/crlib v0.0.0-20250916151006-1094cb39adac
+	github.com/cockroachdb/datadriven v1.0.3-0.20250911232732-d959cf14706c
 	github.com/cockroachdb/errors v1.12.0
 	github.com/cockroachdb/go-test-teamcity v0.0.0-20191211140407-cff980ad0a55
 	github.com/cockroachdb/gostdlib v1.19.0
 	github.com/cockroachdb/logtags v0.0.0-20241215232642-bb51bb14a506
-	github.com/cockroachdb/pebble v0.0.0-20250825175356-bfa7636bb425
+	github.com/cockroachdb/pebble v0.0.0-20250918210818-53f12aa6852b
 	github.com/cockroachdb/redact v1.1.6
 	github.com/cockroachdb/returncheck v0.0.0-20200612231554-92cdbca611dd
 	github.com/cockroachdb/stress v0.0.0-20220803192808-1806698b1b7b
@@ -179,6 +180,7 @@ require (
 	github.com/google/skylark v0.0.0-20181101142754-a5f7082aabed
 	github.com/googleapis/gax-go/v2 v2.7.1
 	github.com/gorilla/mux v1.8.0
+	github.com/gorilla/schema v1.4.1
 	github.com/goware/modvendor v0.5.0
 	github.com/grafana/grafana-openapi-client-go v0.0.0-20240215164046-eb0e60d27cb7
 	github.com/grpc-ecosystem/grpc-gateway v1.16.0

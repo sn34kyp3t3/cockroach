@@ -1457,6 +1457,7 @@ func TestLint(t *testing.T) {
 		if err := stream.ForEach(stream.Sequence(
 			filter,
 			stream.GrepNot(`(json|jsonpb|yaml|protoutil|xml|\.Field|ewkb|wkb|wkt|asn1)\.Marshal\(`),
+			stream.GrepNot(`nolint:protomarshal`),
 		), func(s string) {
 			t.Errorf("\n%s <- forbidden; use 'protoutil.Marshal' instead", s)
 		}); err != nil {
@@ -2878,8 +2879,9 @@ func TestLint(t *testing.T) {
 			"--",
 			"**testdata**",
 			"**/*_test.go",
-			":!testutils/lint/lint_test.go",     // false-positive: the lint itself.
-			":!sql/tests/testdata/initial_keys", // exempt: deliberate test of bootstrap catalog
+			":!testutils/lint/lint_test.go", // false-positive: the lint itself.
+			":!sql/logictest/testdata/logic_test/gen_test_objects", // exempt: randomly generated table names.
+			":!sql/tests/testdata/initial_keys",                    // exempt: deliberate test of bootstrap catalog
 			":!sql/catalog/systemschema_test/testdata/bootstrap*",  // exempt: deliberate test of bootstrap catalog.
 			":!sql/catalog/internal/catkv/testdata/",               // TODO(foundations): #137029.
 			":!cli/testdata/doctor/",                               // TODO(foundations): #137030.

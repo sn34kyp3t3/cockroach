@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/settings/cluster"
+	"github.com/cockroachdb/cockroach/pkg/util/tracing/tracingpb"
 )
 
 const (
@@ -32,11 +33,16 @@ const (
 	defaultLBRebalancingObjective  = 0 // QPS
 )
 
+const DefaultNodeCPURateCapacityNanos = 8 * 1e9        // 8 vcpus
+const DefaultStoreDiskCapacityBytes = 1024 << 30       // 1024 GiB
+const DoubleDefaultNodeCPURateCapacityNanos = 16 * 1e9 // 16 vcpus
+const DoubleDefaultStoreDiskCapacityBytes = 2048 << 30 // 2048 GiB
+
 var (
-	// defaultStartTime is used as the default beginning time for simulation
+	// DefaultStartTime is used as the default beginning time for simulation
 	// runs. It isn't necessarily meaningful other than for logging and having
 	// "some" start time for components taking a time.Time.
-	defaultStartTime = time.Date(2022, 03, 21, 11, 0, 0, 0, time.UTC)
+	DefaultStartTime = time.Date(2022, 03, 21, 11, 0, 0, 0, time.UTC)
 )
 
 // SimulationSettings controls
@@ -111,12 +117,15 @@ type SimulationSettings struct {
 	// TODO(wenyihu6): Remove any non-simulation settings from this struct and
 	// instead override the settings below.
 	ST *cluster.Settings
+	// OnRecording is called with trace spans obtained by recording the allocator.
+	// NB: we can't use state.StoreID here since that causes an import cycle.
+	OnRecording func(storeID int64, rec tracingpb.Recording)
 }
 
 // DefaultSimulationSettings returns a set of default settings for simulation.
 func DefaultSimulationSettings() *SimulationSettings {
 	return &SimulationSettings{
-		StartTime:               defaultStartTime,
+		StartTime:               DefaultStartTime,
 		TickInterval:            defaultTickInteval,
 		MetricsInterval:         defaultMetricsInterval,
 		Seed:                    defaultSeed,

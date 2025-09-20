@@ -177,7 +177,7 @@ func (t *leaseTest) expectLeases(descID descpb.ID, expected string) {
 }
 
 func (t *leaseTest) acquire(nodeID uint32, descID descpb.ID) (lease.LeasedDescriptor, error) {
-	return t.node(nodeID).Acquire(context.Background(), t.server.Clock().Now(), descID)
+	return t.node(nodeID).Acquire(context.Background(), lease.TimestampToReadTimestamp(t.server.Clock().Now()), descID)
 }
 
 func (t *leaseTest) acquireMinVersion(
@@ -557,16 +557,7 @@ func TestWaitForNewVersion(testingT *testing.T) {
 	defer leaktest.AfterTest(testingT)()
 	defer log.Scope(testingT).Close(testingT)
 
-	skip.WithIssue(testingT, 152051)
-
 	var params base.TestClusterArgs
-	params.ServerArgs.Knobs = base.TestingKnobs{
-		SQLLeaseManager: &lease.ManagerTestingKnobs{
-			LeaseStoreTestingKnobs: lease.StorageTestingKnobs{
-				LeaseAcquiredEvent: nil, // TODO
-			},
-		},
-	}
 	t := newLeaseTest(testingT, params)
 	defer t.cleanup()
 
@@ -589,7 +580,10 @@ func TestWaitForNewVersion(testingT *testing.T) {
 		defer cancel()
 
 		_, err := leaseMgr.WaitForNewVersion(timeoutCtx, descID, nil, retry.Options{})
-		require.ErrorIs(t, err, context.DeadlineExceeded)
+		if !(sqltestutils.IsClientSideQueryCanceledErr(err) ||
+			errors.Is(err, context.DeadlineExceeded)) {
+			t.Fatalf("The client or the context should have timed out. Unexpected error: %v", err)
+		}
 	}
 
 	t.mustAcquire(3, descID)
@@ -673,7 +667,7 @@ CREATE TABLE test.t(a INT PRIMARY KEY);
 func acquire(
 	ctx context.Context, s serverutils.ApplicationLayerInterface, descID descpb.ID,
 ) (lease.LeasedDescriptor, error) {
-	return s.LeaseManager().(*lease.Manager).Acquire(ctx, s.Clock().Now(), descID)
+	return s.LeaseManager().(*lease.Manager).Acquire(ctx, lease.TimestampToReadTimestamp(s.Clock().Now()), descID)
 }
 
 // Test that once a table is marked as deleted, a lease's refcount dropping to 0
@@ -1243,7 +1237,7 @@ CREATE TABLE t.test (k CHAR PRIMARY KEY, v CHAR);
 	// Acquire the lease so it is put into the nameCache.
 	_, err := leaseManager.AcquireByName(
 		context.Background(),
-		t.server.Clock().Now(),
+		lease.TimestampToReadTimestamp(t.server.Clock().Now()),
 		dbID,
 		tableDesc.GetParentSchemaID(),
 		tableName,
@@ -1258,7 +1252,7 @@ CREATE TABLE t.test (k CHAR PRIMARY KEY, v CHAR);
 		for pb.Next() {
 			_, err := leaseManager.AcquireByName(
 				context.Background(),
-				t.server.Clock().Now(),
+				lease.TimestampToReadTimestamp(t.server.Clock().Now()),
 				dbID,
 				tableDesc.GetParentSchemaID(),
 				tableName,
@@ -1304,7 +1298,12 @@ func TestIncrementTableVersion(t *testing.T) {
 	defer srv.Stopper().Stop(context.Background())
 	codec := srv.ApplicationLayer().Codec()
 
+	// This test relies on legacy schema changer testing knobs.
+	if _, err := sqlDB.Exec(`SET CLUSTER SETTING sql.defaults.use_declarative_schema_changer = 'off';`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := sqlDB.Exec(`
+SET use_declarative_schema_changer = 'off';
 CREATE DATABASE t;
 CREATE TABLE t.kv (k CHAR PRIMARY KEY, v CHAR);
 `); err != nil {
@@ -1410,7 +1409,12 @@ func TestTwoVersionInvariantRetryErrorWithSavePoint(t *testing.T) {
 	defer srv.Stopper().Stop(context.Background())
 	s := srv.ApplicationLayer()
 
+	// This test relies on legacy schema changer testing knobs.
+	if _, err := sqlDB.Exec(`SET CLUSTER SETTING sql.defaults.use_declarative_schema_changer = 'off';`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := sqlDB.Exec(`
+SET use_declarative_schema_changer = 'off';
 CREATE DATABASE t;
 CREATE TABLE t.kv (k CHAR PRIMARY KEY, v CHAR);
 INSERT INTO t.kv VALUES ('a', 'b');
@@ -1530,7 +1534,12 @@ func TestTwoVersionInvariantRetryError(t *testing.T) {
 	defer srv.Stopper().Stop(context.Background())
 	s := srv.ApplicationLayer()
 
+	// This test relies on legacy schema changer testing knobs.
+	if _, err := sqlDB.Exec(`SET CLUSTER SETTING sql.defaults.use_declarative_schema_changer = 'off';`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := sqlDB.Exec(`
+SET use_declarative_schema_changer = 'off';
 CREATE DATABASE t;
 CREATE TABLE t.kv (k CHAR PRIMARY KEY, v CHAR);
 INSERT INTO t.kv VALUES ('a', 'b');
@@ -1908,7 +1917,7 @@ CREATE TABLE t.after (k CHAR PRIMARY KEY, v CHAR);
 	// Acquire a lease on "before" by name.
 	beforeTable, err := t.node(1).AcquireByName(
 		ctx,
-		t.server.Clock().Now(),
+		lease.TimestampToReadTimestamp(t.server.Clock().Now()),
 		dbID,
 		beforeDesc.GetParentSchemaID(),
 		"before",
@@ -1926,7 +1935,7 @@ CREATE TABLE t.after (k CHAR PRIMARY KEY, v CHAR);
 	// Acquire a lease on "after" by name after server startup.
 	afterTable, err := t.node(1).AcquireByName(
 		ctx,
-		t.server.Clock().Now(),
+		lease.TimestampToReadTimestamp(t.server.Clock().Now()),
 		dbID,
 		afterDesc.GetParentSchemaID(),
 		"after",
@@ -1993,7 +2002,7 @@ func TestLeaseAcquisitionDoesntBlock(t *testing.T) {
 
 	require.NoError(t, <-schemaCh)
 
-	l, err := s.LeaseManager().(*lease.Manager).Acquire(ctx, s.Clock().Now(), descID)
+	l, err := s.LeaseManager().(*lease.Manager).Acquire(ctx, lease.TimestampToReadTimestamp(s.Clock().Now()), descID)
 	require.NoError(t, err)
 
 	// Release the lease so that the schema change can proceed.
@@ -2333,7 +2342,7 @@ func TestLeaseWithOfflineTables(t *testing.T) {
 		// descriptor txn will not wait for the initial version.
 		if expected == descpb.DescriptorState_DROP && next == descpb.DescriptorState_PUBLIC {
 			require.NoError(t,
-				execCfg.LeaseManager.WaitForInitialVersion(ctx, descpb.IDs{testTableID()}, retry.Options{}, nil))
+				execCfg.LeaseManager.WaitForInitialVersion(ctx, descpb.IDs{testTableID()}, nil /* regions */, retry.Options{}))
 		}
 		// Wait for the lease manager's refresh worker to have processed the
 		// descriptor update.
@@ -2525,7 +2534,7 @@ func TestHistoricalDescriptorAcquire(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.LeaseManager().(*lease.Manager).WaitForOneVersion(ctx, tableID.Load().(descpb.ID), cachedDatabaseRegions, base.DefaultRetryOptions())
 	require.NoError(t, err, "Failed to wait for one version of descriptor: %s", err)
-	acquiredDescriptor, err := s.LeaseManager().(*lease.Manager).Acquire(ctx, ts1, tableID.Load().(descpb.ID))
+	acquiredDescriptor, err := s.LeaseManager().(*lease.Manager).Acquire(ctx, lease.TimestampToReadTimestamp(ts1), tableID.Load().(descpb.ID))
 	assert.NoError(t, err)
 
 	// Ensure the modificationTime <= timestamp < expirationTime
@@ -3679,7 +3688,7 @@ func BenchmarkAcquireLeaseConcurrent(b *testing.B) {
 			b.ResetTimer()
 			b.RunParallel(func(pb *testing.PB) {
 				for pb.Next() {
-					l, err := s.LeaseManager().(*lease.Manager).Acquire(ctx, s.Clock().Now(), tableID)
+					l, err := s.LeaseManager().(*lease.Manager).Acquire(ctx, lease.TimestampToReadTimestamp(s.Clock().Now()), tableID)
 					if err != nil {
 						panic(err)
 					}

@@ -965,6 +965,9 @@ func applyOverrides(o sessiondata.InternalExecutorOverride, sd *sessiondata.Sess
 	if o.BufferedWritesEnabled != nil {
 		sd.BufferedWritesEnabled = *o.BufferedWritesEnabled
 	}
+	if o.AlwaysDistributeFullScans {
+		sd.AlwaysDistributeFullScans = true
+	}
 	// For 25.2, we're being conservative and explicitly disabling buffered
 	// writes for the internal executor.
 	// TODO(yuzefovich): remove this for 25.3.
@@ -1170,7 +1173,7 @@ func (ie *InternalExecutor) execInternal(
 		// TODO(andrei): Properly clone (deep copy) ie.sessionData.
 		sd = ie.sessionDataStack.Top().Clone()
 	} else {
-		sd = NewInternalSessionData(context.Background(), ie.s.cfg.Settings, "" /* opName */)
+		sd = NewInternalSessionData(ctx, ie.s.cfg.Settings, "" /* opName */)
 	}
 	if globalOverride := ieMultiOverride.Get(&ie.s.cfg.Settings.SV); globalOverride != "" {
 		globalOverride = strings.TrimSpace(globalOverride)

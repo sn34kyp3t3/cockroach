@@ -116,7 +116,7 @@ type adminServer struct {
 	statsLimiter     *quotapool.IntPool
 	st               *cluster.Settings
 	serverIterator   ServerIterator
-	nd               rpcbase.NodeDialer
+	nd               *nodeDialer
 	distSender       *kvcoord.DistSender
 	rpcContext       *rpc.Context
 	clock            *hlc.Clock
@@ -221,7 +221,7 @@ func newAdminServer(
 		),
 		st:             cs,
 		serverIterator: serverIterator,
-		nd:             &nodeDialer{si: serverIterator},
+		nd:             &nodeDialer{cs: cs, si: serverIterator},
 		distSender:     distSender,
 		rpcContext:     rpcCtx,
 		clock:          clock,
@@ -1357,7 +1357,7 @@ func (s *adminServer) statsForSpan(
 				var spanResponse *roachpb.SpanStatsResponse
 				err := timeutil.RunWithTimeout(ctx, "request remote stats", 20*time.Second,
 					func(ctx context.Context) error {
-						client, err := serverpb.DialStatusClient(s.nd, ctx, nodeID)
+						client, err := serverpb.DialStatusClient(s.nd, ctx, nodeID, s.nd.cs)
 						if err == nil {
 							req := roachpb.SpanStatsRequest{
 								Spans:  []roachpb.Span{span},
@@ -2135,7 +2135,7 @@ func (s *adminServer) checkReadinessForHealthCheck(ctx context.Context) error {
 		return err
 	}
 
-	if s.drpc.enabled {
+	if rpcbase.DRPCEnabled(ctx, s.st) {
 		if err := s.drpc.health(ctx); err != nil {
 			return err
 		}
@@ -2181,7 +2181,7 @@ func (s *systemAdminServer) checkReadinessForHealthCheck(ctx context.Context) er
 		return err
 	}
 
-	if s.drpc.enabled {
+	if rpcbase.DRPCEnabled(ctx, s.st) {
 		if err := s.drpc.health(ctx); err != nil {
 			return err
 		}
@@ -3510,11 +3510,11 @@ func (rs resultScanner) ScanIndex(row tree.Datums, index int, dst interface{}) e
 		*d = &val
 
 	case *int64:
-		s, ok := tree.AsDInt(src)
+		s, ok := src.(*tree.DInt)
 		if !ok {
 			return errors.Errorf("source type assertion failed")
 		}
-		*d = int64(s)
+		*d = int64(*s)
 
 	case **int64:
 		s, ok := src.(*tree.DInt)
@@ -3529,29 +3529,29 @@ func (rs resultScanner) ScanIndex(row tree.Datums, index int, dst interface{}) e
 		*d = &val
 
 	case *[]int64:
-		s, ok := tree.AsDArray(src)
+		s, ok := src.(*tree.DArray)
 		if !ok {
 			return errors.Errorf("source type assertion failed")
 		}
 		for i := 0; i < s.Len(); i++ {
-			id, ok := tree.AsDInt(s.Array[i])
+			id, ok := s.Array[i].(*tree.DInt)
 			if !ok {
 				return errors.Errorf("source type assertion failed on index %d", i)
 			}
-			*d = append(*d, int64(id))
+			*d = append(*d, int64(*id))
 		}
 
 	case *[]descpb.ID:
-		s, ok := tree.AsDArray(src)
+		s, ok := src.(*tree.DArray)
 		if !ok {
 			return errors.Errorf("source type assertion failed")
 		}
 		for i := 0; i < s.Len(); i++ {
-			id, ok := tree.AsDInt(s.Array[i])
+			id, ok := s.Array[i].(*tree.DInt)
 			if !ok {
 				return errors.Errorf("source type assertion failed on index %d", i)
 			}
-			*d = append(*d, descpb.ID(id))
+			*d = append(*d, descpb.ID(*id))
 		}
 
 	case *time.Time:
@@ -3770,7 +3770,7 @@ func (s *adminServer) queryTableID(
 func (s *adminServer) dialNode(
 	ctx context.Context, nodeID roachpb.NodeID,
 ) (serverpb.RPCAdminClient, error) {
-	return serverpb.DialAdminClient(s.nd, ctx, nodeID)
+	return serverpb.DialAdminClient(s.nd, ctx, nodeID, s.nd.cs)
 }
 
 func (s *adminServer) ListTracingSnapshots(

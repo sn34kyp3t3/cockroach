@@ -1128,6 +1128,16 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_github_binxio_gcloudconfig",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/binxio/gcloudconfig",
+        sha256 = "82797ef5d9fa4cba09d64ca885a3b6b8867d046c8f144ed15dc102085b0c6ceb",
+        strip_prefix = "github.com/binxio/gcloudconfig@v0.1.5",
+        urls = [
+            "https://storage.googleapis.com/cockroach-godeps/gomod/github.com/binxio/gcloudconfig/com_github_binxio_gcloudconfig-v0.1.5.zip",
+        ],
+    )
+    go_repository(
         name = "com_github_biogo_store",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/biogo/store",
@@ -1740,20 +1750,20 @@ def go_deps():
         name = "com_github_cockroachdb_crlib",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/cockroachdb/crlib",
-        sha256 = "4fb4d32f15fb3c63decb9625406f291874f975518d5937493a7a9d1f3a644f18",
-        strip_prefix = "github.com/cockroachdb/crlib@v0.0.0-20250718215705-7ff5051265b9",
+        sha256 = "4e2aad9df48f99411a51186fdf92041c881adc642c87106776734e8a64578077",
+        strip_prefix = "github.com/cockroachdb/crlib@v0.0.0-20250916151006-1094cb39adac",
         urls = [
-            "https://storage.googleapis.com/cockroach-godeps/gomod/github.com/cockroachdb/crlib/com_github_cockroachdb_crlib-v0.0.0-20250718215705-7ff5051265b9.zip",
+            "https://storage.googleapis.com/cockroach-godeps/gomod/github.com/cockroachdb/crlib/com_github_cockroachdb_crlib-v0.0.0-20250916151006-1094cb39adac.zip",
         ],
     )
     go_repository(
         name = "com_github_cockroachdb_datadriven",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/cockroachdb/datadriven",
-        sha256 = "251593cd9c040fe84a99a3919de7ce6f85030d522159a37d625dc2dea7a4d17f",
-        strip_prefix = "github.com/cockroachdb/datadriven@v1.0.3-0.20250407164829-2945557346d5",
+        sha256 = "417027b5ff27774000129768f79e9ae62021b95d3ac9d3181e132dbe46b44da3",
+        strip_prefix = "github.com/cockroachdb/datadriven@v1.0.3-0.20250911232732-d959cf14706c",
         urls = [
-            "https://storage.googleapis.com/cockroach-godeps/gomod/github.com/cockroachdb/datadriven/com_github_cockroachdb_datadriven-v1.0.3-0.20250407164829-2945557346d5.zip",
+            "https://storage.googleapis.com/cockroach-godeps/gomod/github.com/cockroachdb/datadriven/com_github_cockroachdb_datadriven-v1.0.3-0.20250911232732-d959cf14706c.zip",
         ],
     )
     go_repository(
@@ -1820,10 +1830,10 @@ def go_deps():
         patches = [
             "@com_github_cockroachdb_cockroach//build/patches:com_github_cockroachdb_pebble.patch",
         ],
-        sha256 = "a1eed450236610af0ed0f4eda9aac50065f8d62dc73101ea098523bd173f21cb",
-        strip_prefix = "github.com/cockroachdb/pebble@v0.0.0-20250825175356-bfa7636bb425",
+        sha256 = "ce6b413d464aa7d86272d5b70b34cfe911c05f4dd4ce540cabaf7899c766aba3",
+        strip_prefix = "github.com/cockroachdb/pebble@v0.0.0-20250918210818-53f12aa6852b",
         urls = [
-            "https://storage.googleapis.com/cockroach-godeps/gomod/github.com/cockroachdb/pebble/com_github_cockroachdb_pebble-v0.0.0-20250825175356-bfa7636bb425.zip",
+            "https://storage.googleapis.com/cockroach-godeps/gomod/github.com/cockroachdb/pebble/com_github_cockroachdb_pebble-v0.0.0-20250918210818-53f12aa6852b.zip",
         ],
     )
     go_repository(
@@ -4229,6 +4239,16 @@ def go_deps():
         strip_prefix = "github.com/gorilla/mux@v1.8.0",
         urls = [
             "https://storage.googleapis.com/cockroach-godeps/gomod/github.com/gorilla/mux/com_github_gorilla_mux-v1.8.0.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_gorilla_schema",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/gorilla/schema",
+        sha256 = "63885f95be210851d623d464698326a202274e191f53f7b7905a150e9cf04494",
+        strip_prefix = "github.com/gorilla/schema@v1.4.1",
+        urls = [
+            "https://storage.googleapis.com/cockroach-godeps/gomod/github.com/gorilla/schema/com_github_gorilla_schema-v1.4.1.zip",
         ],
     )
     go_repository(

@@ -346,22 +346,13 @@ you must pass the 'encryption_info_dir' parameter that points to the directory o
 		info.enc = encryption
 
 		mkStore := p.ExecCfg().DistSQLSrv.ExternalStorageFromURI
-		incStores, cleanupFn, err := backupdest.MakeBackupDestinationStores(ctx, p.User(), mkStore,
-			fullyResolvedIncrementalsDirectory)
-		if err != nil {
-			return err
-		}
-		defer func() {
-			if err := cleanupFn(); err != nil {
-				log.Dev.Warningf(ctx, "failed to close incremental store: %+v", err)
-			}
-		}()
 
 		info.defaultURIs, info.manifests, info.localityInfo, memReserved,
 			err = backupdest.ResolveBackupManifests(
-			ctx, p.ExecCfg(), &mem, defaultCollectionURI, baseStores, incStores, mkStore, subdir,
+			ctx, p.ExecCfg(), &mem, defaultCollectionURI, dest, mkStore, subdir,
 			fullyResolvedDest, fullyResolvedIncrementalsDirectory, hlc.Timestamp{},
 			encryption, &kmsEnv, p.User(), true /* includeSkipped */, true, /* includeCompacted */
+			len(explicitIncPaths) > 0,
 		)
 		defer func() {
 			mem.Shrink(ctx, memReserved)
@@ -485,7 +476,7 @@ func checkBackupFiles(
 		// Check metadata files. Note: we do not check locality aware backup
 		// metadata files ( prefixed with `backupPartitionDescriptorPrefix`) , as
 		// they're validated in resolveBackupManifests.
-		metaFile := backupbase.BackupManifestName + backupinfo.BackupManifestChecksumSuffix
+		metaFile := backupbase.DeprecatedBackupManifestName + backupinfo.BackupManifestChecksumSuffix
 		if _, err := defaultStore.Size(ctx, metaFile); err != nil {
 			return nil, errors.Wrapf(err, "Error checking metadata file %s/%s",
 				info.defaultURIs[layer], metaFile)
@@ -1396,7 +1387,7 @@ func showBackupsInCollectionPlanHook(
 			return errors.Wrapf(err, "connect to external storage")
 		}
 		defer store.Close()
-		res, err := backupdest.ListFullBackupsInCollection(ctx, store)
+		res, err := backupdest.ListFullBackupsInCollection(ctx, store, showStmt.Options.Index)
 		if err != nil {
 			return err
 		}

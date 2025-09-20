@@ -7,6 +7,7 @@ package kvserver
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	"github.com/cockroachdb/cockroach/pkg/keys"
@@ -24,6 +25,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/storage"
 	"github.com/cockroachdb/cockroach/pkg/storage/fs"
 	"github.com/cockroachdb/cockroach/pkg/util"
+	"github.com/cockroachdb/cockroach/pkg/util/buildutil"
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
 	"github.com/cockroachdb/cockroach/pkg/util/humanizeutil"
 	"github.com/cockroachdb/cockroach/pkg/util/log"
@@ -566,7 +568,7 @@ func (r *Replica) applySnapshotRaftMuLocked(
 		Term:  kvpb.RaftTerm(nonemptySnap.Metadata.Term),
 	}
 
-	subsumedDescs := make([]*roachpb.RangeDescriptor, 0, len(subsumedRepls))
+	subsume := make([]destroyReplicaInfo, 0, len(subsumedRepls))
 	for _, sr := range subsumedRepls {
 		// We mark the replica as destroyed so that new commands are not
 		// accepted. This destroy status will be detected after the batch
@@ -580,11 +582,19 @@ func (r *Replica) applySnapshotRaftMuLocked(
 		sr.shMu.destroyStatus.Set(
 			kvpb.NewRangeNotFoundError(sr.RangeID, sr.store.StoreID()),
 			destroyReasonRemoved)
+		srDesc := sr.descRLocked()
 		sr.mu.Unlock()
 		sr.readOnlyCmdMu.Unlock()
 
-		subsumedDescs = append(subsumedDescs, sr.Desc())
+		subsume = append(subsume, destroyReplicaInfo{id: sr.ID(), desc: srDesc})
 	}
+
+	// NB: subsumedDescs in snapWriteBuilder must be sorted by start key. This
+	// should be the case, by construction, but add a test-only assertion just in
+	// case this ever changes.
+	testingAssert(slices.IsSortedFunc(subsume, func(a, b destroyReplicaInfo) int {
+		return a.desc.StartKey.Compare(b.desc.StartKey)
+	}), "subsumedDescs must be sorted by start key")
 
 	sb := snapWriteBuilder{
 		id: r.ID(),
@@ -593,10 +603,11 @@ func (r *Replica) applySnapshotRaftMuLocked(
 		sl:       r.raftMu.stateLoader,
 		writeSST: inSnap.SSTStorageScratch.WriteSST,
 
-		truncState:    truncState,
-		hardState:     hs,
-		desc:          desc,
-		subsumedDescs: subsumedDescs,
+		truncState: truncState,
+		hardState:  hs,
+		desc:       desc,
+		origDesc:   r.shMu.state.Desc,
+		subsume:    subsume,
 
 		cleared: inSnap.clearedSpans,
 	}
@@ -824,4 +835,10 @@ func (r *Replica) clearSubsumedReplicaInMemoryData(
 		}
 	}
 	return phs, nil
+}
+
+func testingAssert(cond bool, msg string) {
+	if buildutil.CrdbTestBuild && !cond {
+		panic(msg)
+	}
 }

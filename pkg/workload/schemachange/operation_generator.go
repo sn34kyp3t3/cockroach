@@ -2520,7 +2520,7 @@ func (og *operationGenerator) setColumnDefault(ctx context.Context, tx pgx.Tx) (
 
 	defaultDatum := randgen.RandDatum(og.params.rng, datumTyp, columnForDefault.nullable)
 	stmt := makeOpStmt(OpStmtDDL)
-	if (!datumTyp.Equivalent(columnForDefault.typ)) && defaultDatum != tree.DNull {
+	if !datumTyp.Equivalent(columnForDefault.typ) {
 		stmt.expectedExecErrors.add(pgcode.DatatypeMismatch)
 	}
 	// Generated columns cannot have default values.
@@ -2530,8 +2530,11 @@ func (og *operationGenerator) setColumnDefault(ctx context.Context, tx pgx.Tx) (
 	}
 
 	strDefault := tree.AsStringWithFlags(defaultDatum, tree.FmtParsable)
-	stmt.sql = fmt.Sprintf(`ALTER TABLE %s ALTER COLUMN %s SET DEFAULT %s`,
-		tableName.String(), columnForDefault.name.String(), strDefault)
+	// Always use explicit type casting to ensure consistent behavior and avoid parse errors.
+	// When the types don't match, this will produce the expected DatatypeMismatch error.
+	// When the types do match, the cast is harmless and makes the intent explicit.
+	stmt.sql = fmt.Sprintf(`ALTER TABLE %s ALTER COLUMN %s SET DEFAULT %s::%s`,
+		tableName.String(), columnForDefault.name.String(), strDefault, datumTyp.SQLString())
 	return stmt, nil
 }
 
@@ -5431,18 +5434,29 @@ func (og *operationGenerator) createTrigger(ctx context.Context, tx pgx.Tx) (*op
 		return nil, err
 	}
 
+	schemaName, err := og.randSchema(ctx, tx, og.alwaysExisting())
+	if err != nil {
+		return nil, err
+	}
 	triggerFunctionName := fmt.Sprintf("trigger_function_%s", og.newUniqueSeqNumSuffix())
+	resolvedTriggerFunctionName := fmt.Sprintf("%s.%s", schemaName, triggerFunctionName)
 
-	// Try to generate a random SELECT statement for more complex dependencies
+	// Try to generate a random SELECT statement for more coamplex dependencies
 	selectStmt, err := og.selectStmt(ctx, tx)
 	if err != nil {
 		return nil, err
 	}
 	// Our trigger function will always return the original value to avoid
 	// breaking inserts.
-	triggerFunction := fmt.Sprintf(`CREATE FUNCTION %s() RETURNS TRIGGER AS $FUNC_BODY$ BEGIN %s;RETURN NEW;END; $FUNC_BODY$ LANGUAGE PLpgSQL`, triggerFunctionName, selectStmt.sql)
+	triggerFunction := fmt.Sprintf(`CREATE FUNCTION %s() RETURNS TRIGGER AS $FUNC_BODY$ BEGIN %s;RETURN NEW;END; $FUNC_BODY$ LANGUAGE PLpgSQL`, resolvedTriggerFunctionName, selectStmt.sql)
 
-	og.LogMessage(fmt.Sprintf("Created trigger function %s", triggerFunction))
+	// Check if the routine already exists.
+	routineAlreadyExists, err := og.fnExistsByName(ctx, tx, schemaName, triggerFunctionName)
+	if err != nil {
+		return nil, err
+	}
+
+	og.LogMessage(fmt.Sprintf("Created trigger function %s", resolvedTriggerFunctionName))
 
 	// Create TRIGGER statement components
 	triggerActionTime := "BEFORE"
@@ -5471,8 +5485,7 @@ func (og *operationGenerator) createTrigger(ctx context.Context, tx pgx.Tx) (*op
 
 	// Build the SQL statement
 	sqlStatement := fmt.Sprintf("%s;CREATE TRIGGER %s %s %s ON %s FOR EACH ROW EXECUTE FUNCTION %s()",
-		triggerFunction, triggerName, triggerActionTime, eventClause, tableName, triggerFunctionName)
-
+		triggerFunction, triggerName, triggerActionTime, eventClause, tableName, resolvedTriggerFunctionName)
 	og.LogMessage(fmt.Sprintf("createTrigger: %s", sqlStatement))
 
 	opStmt := makeOpStmt(OpStmtDDL)
@@ -5484,6 +5497,7 @@ func (og *operationGenerator) createTrigger(ctx context.Context, tx pgx.Tx) (*op
 		// It does not catch cases where the select statement in the trigger function
 		// has a select query on a table that doesn't exist.
 		{code: pgcode.UndefinedTable, condition: !triggerTableExists},
+		{code: pgcode.DuplicateFunction, condition: routineAlreadyExists},
 	})
 
 	opStmt.potentialExecErrors.addAll(codesWithConditions{

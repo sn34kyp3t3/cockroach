@@ -370,7 +370,7 @@ func changefeedPlanHook(
 			}); err != nil {
 				if sj != nil {
 					if err := sj.CleanupOnRollback(ctx); err != nil {
-						log.Dev.Warningf(ctx, "failed to cleanup aborted job: %v", err)
+						log.Changefeed.Warningf(ctx, "failed to cleanup aborted job: %v", err)
 					}
 				}
 				return err
@@ -437,7 +437,7 @@ func coreChangefeed(
 	for r := getRetry(ctx, maxBackoff, backoffReset); ; {
 		if !r.Next() {
 			// Retry loop exits when context is canceled.
-			log.Dev.Infof(ctx, "core changefeed retry loop exiting: %s", ctx.Err())
+			log.Changefeed.Infof(ctx, "core changefeed retry loop exiting: %s", ctx.Err())
 			return ctx.Err()
 		}
 
@@ -447,7 +447,7 @@ func coreChangefeed(
 
 		err := distChangefeedFlow(ctx, p, 0 /* jobID */, details, description, localState, resultsCh, nil, targets)
 		if err == nil {
-			log.Dev.Infof(ctx, "core changefeed completed with no error")
+			log.Changefeed.Infof(ctx, "core changefeed completed with no error")
 			return nil
 		}
 
@@ -456,13 +456,13 @@ func coreChangefeed(
 		}
 
 		if err := changefeedbase.AsTerminalError(ctx, p.ExecCfg().LeaseManager, err); err != nil {
-			log.Dev.Infof(ctx, "core changefeed failed due to error: %s", err)
+			log.Changefeed.Infof(ctx, "core changefeed failed due to error: %s", err)
 			return err
 		}
 
 		// All other errors retry; but we'll use an up-to-date progress
 		// information which is saved in the localState.
-		log.Dev.Infof(ctx, "core changefeed retrying due to transient error: %s", err)
+		log.Changefeed.Infof(ctx, "core changefeed retrying due to transient error: %s", err)
 	}
 }
 
@@ -484,13 +484,14 @@ func evalCursor(
 
 func getTargetList(changefeedStmt *annotatedChangefeedStatement) (*tree.BackupTargetList, error) {
 	targetList := tree.BackupTargetList{}
-	if changefeedStmt.Level == tree.ChangefeedLevelTable {
+	switch changefeedStmt.Level {
+	case tree.ChangefeedLevelTable:
 		for _, t := range changefeedStmt.TableTargets {
 			targetList.Tables.TablePatterns = append(targetList.Tables.TablePatterns, t.TableName)
 		}
-	} else if changefeedStmt.Level == tree.ChangefeedLevelDatabase {
+	case tree.ChangefeedLevelDatabase:
 		targetList.Databases = tree.NameList{tree.Name(changefeedStmt.DatabaseTarget)}
-	} else {
+	default:
 		return nil, errors.AssertionFailedf("unknown changefeed level: %s", changefeedStmt.Level.String())
 	}
 	return &targetList, nil
@@ -570,10 +571,22 @@ func createChangefeedJobRecord(
 
 	var details jobspb.ChangefeedDetails
 
-	tableNameToDescriptor, targetDatabaseDescs, err := getTargetDescriptors(ctx, p, targetList, statementTime, initialHighWater)
+	tableNameToDescriptor, targetDatabaseDescs, tableAndParentDescs, err := getTargetDescriptors(
+		ctx,
+		p,
+		targetList,
+		statementTime,
+		initialHighWater,
+	)
 
 	if err != nil {
 		return nil, changefeedbase.Targets{}, err
+	}
+	if len(tableAndParentDescs) == 0 {
+		return nil, changefeedbase.Targets{}, errors.AssertionFailedf("expected at least one descriptor")
+	}
+	if len(targetDatabaseDescs) > 1 {
+		return nil, changefeedbase.Targets{}, errors.AssertionFailedf("expected at most one database descriptor, got %d", len(targetDatabaseDescs))
 	}
 
 	for _, t := range tableNameToDescriptor {
@@ -640,25 +653,65 @@ func createChangefeedJobRecord(
 	hasSelectPrivOnAllTables := true
 	hasChangefeedPrivOnAllTables := true
 	tolerances := opts.GetCanHandle()
-	for _, desc := range tableNameToDescriptor {
-		if table, isTable := desc.(catalog.TableDescriptor); isTable {
-			if err := changefeedvalidators.ValidateTable(targets, table, tolerances); err != nil {
-				return nil, changefeedbase.Targets{}, err
-			}
-			for _, warning := range changefeedvalidators.WarningsForTable(table, tolerances) {
-				p.BufferClientNotice(ctx, pgnotice.Newf("%s", warning))
-			}
+	// Core changefeed:
+	//	- Table-level changefeeds require the user to have SELECT privileges
+	// 	  on all target tables
+	//	- DB-level feeds are not supported
+	// Enterprise changefeed:
+	//  - Table-level feeds require the CHANGEFEED privilege on all target tables
+	//  - DB-level feeds require the CHANGEFEED privilege on the target database
+	switch changefeedStmt.Level {
+	case tree.ChangefeedLevelTable:
+		_, tableToDatabaseLookup := buildTableToDatabaseAndSchemaLookup(tableAndParentDescs)
+		for _, desc := range tableNameToDescriptor {
+			if table, isTable := desc.(catalog.TableDescriptor); isTable {
+				if err := changefeedvalidators.ValidateTable(targets, table, tolerances); err != nil {
+					return nil, changefeedbase.Targets{}, err
+				}
+				for _, warning := range changefeedvalidators.WarningsForTable(table, tolerances) {
+					p.BufferClientNotice(ctx, pgnotice.Newf("%s", warning))
+				}
 
-			hasSelect, hasChangefeed, err := checkPrivilegesForDescriptor(ctx, p, desc)
-			if err != nil {
-				return nil, changefeedbase.Targets{}, err
+				hasSelect, hasChangefeed, err := checkPrivilegesForDescriptor(ctx, p, desc)
+				if err != nil {
+					return nil, changefeedbase.Targets{}, err
+				}
+
+				databaseDesc, ok := tableToDatabaseLookup[table.GetID()]
+				if !ok {
+					return nil, changefeedbase.Targets{}, errors.AssertionFailedf("expected to find a database descriptor for table %s", table.GetName())
+				}
+				if !hasChangefeed {
+					_, hasChangefeed, err = checkPrivilegesForDescriptor(ctx, p, databaseDesc)
+					if err != nil {
+						return nil, changefeedbase.Targets{}, err
+					}
+				}
+
+				hasSelectPrivOnAllTables = hasSelectPrivOnAllTables && hasSelect
+				hasChangefeedPrivOnAllTables = hasChangefeedPrivOnAllTables && hasChangefeed
 			}
-			hasSelectPrivOnAllTables = hasSelectPrivOnAllTables && hasSelect
-			hasChangefeedPrivOnAllTables = hasChangefeedPrivOnAllTables && hasChangefeed
 		}
+	case tree.ChangefeedLevelDatabase:
+		_, hasDatabaseChangefeedPriv, err := checkPrivilegesForDescriptor(ctx, p, targetDatabaseDescs[0])
+		if err != nil {
+			return nil, changefeedbase.Targets{}, err
+		}
+		hasChangefeedPrivOnAllTables = hasDatabaseChangefeedPriv
+	default:
+		return nil, changefeedbase.Targets{}, errors.AssertionFailedf("unknown changefeed level: %s", changefeedStmt.Level)
 	}
+
 	if checkPrivs {
-		if err := authorizeUserToCreateChangefeed(ctx, p, sinkURI, hasSelectPrivOnAllTables, hasChangefeedPrivOnAllTables, opts.GetConfluentSchemaRegistry()); err != nil {
+		if err := authorizeUserToCreateChangefeed(
+			ctx,
+			p,
+			sinkURI,
+			hasSelectPrivOnAllTables,
+			hasChangefeedPrivOnAllTables,
+			changefeedStmt.Level,
+			opts.GetConfluentSchemaRegistry(),
+		); err != nil {
 			return nil, changefeedbase.Targets{}, err
 		}
 	}
@@ -984,22 +1037,24 @@ func getTargetDescriptors(
 ) (
 	tableNameToDescriptor map[tree.TablePattern]catalog.Descriptor,
 	databaseDescs []catalog.DatabaseDescriptor,
+	tableAndParentDescs []catalog.Descriptor,
 	err error,
 ) {
 	if len(targets.Databases) > 0 && len(targets.Tables.TablePatterns) > 0 {
-		return nil, nil, errors.Errorf(`CHANGEFEED cannot target both databases and tables`)
+		return nil, nil, nil, errors.Errorf(`CHANGEFEED cannot target both databases and tables`)
 	}
+
 	for _, t := range targets.Tables.TablePatterns {
 		p, err := t.NormalizeTablePattern()
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		if _, ok := p.(*tree.TableName); !ok {
-			return nil, nil, errors.Errorf(`CHANGEFEED cannot target %s`, tree.AsString(t))
+			return nil, nil, nil, errors.Errorf(`CHANGEFEED cannot target %s`, tree.AsString(t))
 		}
 	}
-
-	_, _, targetDatabaseDescs, targetTableDescs, err := backupresolver.ResolveTargetsToDescriptors(ctx, p, statementTime, targets)
+	// targetTableDescs is empty if the targets are not tables, targetDatabaseDescs is empty if the targets are not databases
+	targetAndParentDescs, _, targetDatabaseDescs, targetTableDescs, err := backupresolver.ResolveTargetsToDescriptors(ctx, p, statementTime, targets)
 	if err != nil {
 		var m *backupresolver.MissingTableErr
 		if errors.As(err, &m) {
@@ -1013,7 +1068,7 @@ func getTargetDescriptors(
 				"do the targets exist at the specified cursor time %s?", initialHighWater)
 		}
 	}
-	return targetTableDescs, targetDatabaseDescs, err
+	return targetTableDescs, targetDatabaseDescs, targetAndParentDescs, err
 }
 
 func getTargetsAndTables(
@@ -1217,8 +1272,13 @@ func makeChangefeedDescription(
 	opts changefeedbase.StatementOptions,
 ) (string, error) {
 	c := &tree.CreateChangefeed{
-		TableTargets: changefeed.TableTargets,
-		Select:       changefeed.Select,
+		Select: changefeed.Select,
+		Level:  changefeed.Level,
+	}
+	if changefeed.Level == tree.ChangefeedLevelDatabase {
+		c.DatabaseTarget = changefeed.DatabaseTarget
+	} else {
+		c.TableTargets = changefeed.TableTargets
 	}
 
 	if sinkURI != "" {
@@ -1355,7 +1415,7 @@ func (b *changefeedResumer) setJobStatusMessage(
 
 	status := jobs.StatusMessage(fmt.Sprintf(fmtOrMsg, args...))
 	if err := b.job.NoTxn().UpdateStatusMessage(ctx, status); err != nil {
-		log.Dev.Warningf(ctx, "failed to set status: %v", err)
+		log.Changefeed.Warningf(ctx, "failed to set status: %v", err)
 	}
 
 	return timeutil.Now()
@@ -1418,7 +1478,7 @@ func (b *changefeedResumer) maybeRelocateJobExecution(
 			return err
 		}
 		if ok, missedTier := current.Locality.Matches(locality); !ok {
-			log.Dev.Infof(ctx,
+			log.Changefeed.Infof(ctx,
 				"CHANGEFEED job %d initially adopted on instance %d but it does not match locality filter %s, finding a new coordinator",
 				b.job.ID(), current.NodeID, missedTier.String(),
 			)
@@ -1453,19 +1513,19 @@ func (b *changefeedResumer) handleChangefeedError(
 	// Execution relocation errors just get returned immediately, as they indicate
 	// another node has taken over execution and this execution should end now.
 	if jobs.IsLeaseRelocationError(changefeedErr) {
-		log.Dev.Warningf(ctx, "job lease relocated (%v)", changefeedErr)
+		log.Changefeed.Warningf(ctx, "job lease relocated (%v)", changefeedErr)
 		return changefeedErr
 	}
 	opts := changefeedbase.MakeStatementOptions(details.Opts)
 	onError, errErr := opts.GetOnError()
 	if errErr != nil {
-		log.Dev.Warningf(ctx, "job failed (%v) but was unable to get on error option (%v)", changefeedErr, errErr)
+		log.Changefeed.Warningf(ctx, "job failed (%v) but was unable to get on error option (%v)", changefeedErr, errErr)
 		return errors.CombineErrors(changefeedErr, errErr)
 	}
 	switch onError {
 	// default behavior
 	case changefeedbase.OptOnErrorFail:
-		log.Dev.Warningf(ctx, "job failed (%v)", changefeedErr)
+		log.Changefeed.Warningf(ctx, "job failed (%v)", changefeedErr)
 		return changefeedErr
 	// pause instead of failing
 	case changefeedbase.OptOnErrorPause:
@@ -1479,11 +1539,11 @@ func (b *changefeedResumer) handleChangefeedError(
 			// directly update running status to avoid the running/reverted job status check
 			md.Progress.StatusMessage = errorMessage
 			ju.UpdateProgress(md.Progress)
-			log.Dev.Warningf(ctx, errorFmt, changefeedErr, changefeedbase.OptOnError, changefeedbase.OptOnErrorPause)
+			log.Changefeed.Warningf(ctx, errorFmt, changefeedErr, changefeedbase.OptOnError, changefeedbase.OptOnErrorPause)
 			return nil
 		}, errorMessage)
 	default:
-		log.Dev.Warningf(ctx, "job failed (%v) but has unrecognized option value %s=%s", changefeedErr, changefeedbase.OptOnError, details.Opts[changefeedbase.OptOnError])
+		log.Changefeed.Warningf(ctx, "job failed (%v) but has unrecognized option value %s=%s", changefeedErr, changefeedbase.OptOnError, details.Opts[changefeedbase.OptOnError])
 		return errors.Wrapf(changefeedErr, "unrecognized option value: %s=%s for handling error",
 			changefeedbase.OptOnError, details.Opts[changefeedbase.OptOnError])
 	}
@@ -1535,7 +1595,7 @@ func (b *changefeedResumer) resumeWithRetries(
 
 	resolvedDest, err := resolveDest(ctx, execCfg, details.SinkURI)
 	if err != nil {
-		log.Dev.Warningf(ctx, "failed to resolve destination details for change monitoring: %v", err)
+		log.Changefeed.Warningf(ctx, "failed to resolve destination details for change monitoring: %v", err)
 	}
 
 	onTracingEvent := func(ctx context.Context, meta *execinfrapb.TracingAggregatorEvents) {
@@ -1586,7 +1646,7 @@ func (b *changefeedResumer) resumeWithRetries(
 					case <-t.C:
 						newDest, err := reloadDest(ctx, jobID, execCfg)
 						if err != nil {
-							log.Dev.Warningf(ctx, "failed to check for updated configuration: %v", err)
+							log.Changefeed.Warningf(ctx, "failed to check for updated configuration: %v", err)
 						} else if newDest != resolvedDest {
 							resolvedDest = newDest
 							return replanErr
@@ -1602,7 +1662,7 @@ func (b *changefeedResumer) resumeWithRetries(
 			}
 
 			if errors.Is(flowErr, replanErr) {
-				log.Dev.Infof(ctx, "restarting changefeed due to updated configuration")
+				log.Changefeed.Infof(ctx, "restarting changefeed due to updated configuration")
 				continue
 			}
 
@@ -1613,7 +1673,7 @@ func (b *changefeedResumer) resumeWithRetries(
 
 		// Terminate changefeed if needed.
 		if err := changefeedbase.AsTerminalError(ctx, jobExec.ExecCfg().LeaseManager, flowErr); err != nil {
-			log.Dev.Infof(ctx, "CHANGEFEED %d shutting down (cause: %v)", jobID, err)
+			log.Changefeed.Infof(ctx, "CHANGEFEED %d shutting down (cause: %v)", jobID, err)
 			// Best effort -- update job status to make it clear why changefeed shut down.
 			// This won't always work if this node is being shutdown/drained.
 			if ctx.Err() == nil {
@@ -1623,7 +1683,7 @@ func (b *changefeedResumer) resumeWithRetries(
 		}
 
 		// All other errors retry.
-		log.Dev.Warningf(ctx, `Changefeed job %d encountered transient error: %v (attempt %d)`,
+		log.Changefeed.Warningf(ctx, `Changefeed job %d encountered transient error: %v (attempt %d)`,
 			jobID, flowErr, 1+r.CurrentAttempt())
 		lastRunStatusUpdate = b.setJobStatusMessage(ctx, lastRunStatusUpdate, "transient error: %s", flowErr)
 
@@ -1656,7 +1716,7 @@ func (b *changefeedResumer) resumeWithRetries(
 				// and this node restarting changefeed before this happens.
 				// We could come up with a mechanism to provide additional
 				// information to dist sql planner.  Or... we could just wait a bit.
-				log.Dev.Warningf(ctx, "Changefeed %d delaying restart due to %d node(s) (%v) draining",
+				log.Changefeed.Warningf(ctx, "Changefeed %d delaying restart due to %d node(s) (%v) draining",
 					jobID, len(localState.drainingNodes), localState.drainingNodes)
 				r.Next() // default config: ~5 sec delay, plus 10 sec on the retry loop.
 			}
@@ -1704,7 +1764,7 @@ func reconcileJobStateWithLocalState(
 	// been updated by the changeFrontier processor since the flow started.
 	reloadedJob, reloadErr := execCfg.JobRegistry.LoadClaimedJob(ctx, jobID)
 	if reloadErr != nil {
-		log.Dev.Warningf(ctx, `CHANGEFEED job %d could not reload job progress (%s); `+
+		log.Changefeed.Warningf(ctx, `CHANGEFEED job %d could not reload job progress (%s); `+
 			`job should be retried later`, jobID, reloadErr)
 		return reloadErr
 	}
@@ -1758,7 +1818,7 @@ func reconcileJobStateWithLocalState(
 		}
 		localState.SetCheckpoint(checkpoint)
 		if log.V(1) {
-			log.Dev.Infof(ctx, "Applying checkpoint to job record:  hw=%v, cf=%v",
+			log.Changefeed.Infof(ctx, "Applying checkpoint to job record:  hw=%v, cf=%v",
 				localState.progress.GetHighWater(), localState.progress.GetChangefeed())
 		}
 		return reloadedJob.NoTxn().Update(ctx,
@@ -1839,7 +1899,7 @@ func (b *changefeedResumer) maybeCleanUpProtectedTimestamp(
 		// NB: The record should get cleaned up by the reconciliation loop.
 		// No good reason to cause more trouble by returning an error here.
 		// Log and move on.
-		log.Dev.Warningf(ctx, "failed to remove protected timestamp record %v: %v", ptsID, err)
+		log.Changefeed.Warningf(ctx, "failed to remove protected timestamp record %v: %v", ptsID, err)
 	}
 }
 
@@ -1992,7 +2052,7 @@ func makeCommonChangefeedEventDetails(
 	if details.SinkURI != `` {
 		parsedSink, err := url.Parse(details.SinkURI)
 		if err != nil {
-			log.Dev.Warningf(ctx, "failed to parse sink for telemetry logging: %v", err)
+			log.Changefeed.Warningf(ctx, "failed to parse sink for telemetry logging: %v", err)
 		}
 		sinkType = parsedSink.Scheme
 	}
@@ -2123,4 +2183,35 @@ func getChangefeedEventMigrator(migrateEvent bool) log.StructuredEventMigrator {
 		},
 		channel.CHANGEFEED,
 	)
+}
+
+func buildTableToDatabaseAndSchemaLookup(
+	targetAndParentDescs []catalog.Descriptor,
+) (
+	tableToSchema map[descpb.ID]catalog.SchemaDescriptor,
+	tableToDatabase map[descpb.ID]catalog.DatabaseDescriptor,
+) {
+	// getSchema maps schema IDs to its schema descriptor.
+	getSchema := make(map[descpb.ID]catalog.SchemaDescriptor)
+	// getDatabase maps database IDs to its database descriptor.
+	getDatabase := make(map[descpb.ID]catalog.DatabaseDescriptor)
+	for _, desc := range targetAndParentDescs {
+		switch desc.DescriptorType() {
+		case catalog.Schema:
+			getSchema[desc.GetID()] = desc.(catalog.SchemaDescriptor)
+		case catalog.Database:
+			getDatabase[desc.GetID()] = desc.(catalog.DatabaseDescriptor)
+		}
+	}
+	// tableToSchema maps table IDs to its parent schema descriptor.
+	tableToSchema = make(map[descpb.ID]catalog.SchemaDescriptor)
+	// tableToDatabase maps table IDs to its parent database descriptor.
+	tableToDatabase = make(map[descpb.ID]catalog.DatabaseDescriptor)
+	for _, desc := range targetAndParentDescs {
+		if desc.DescriptorType() == catalog.Table {
+			tableToDatabase[desc.GetID()] = getDatabase[desc.GetParentID()]
+			tableToSchema[desc.GetID()] = getSchema[desc.GetParentSchemaID()]
+		}
+	}
+	return tableToSchema, tableToDatabase
 }

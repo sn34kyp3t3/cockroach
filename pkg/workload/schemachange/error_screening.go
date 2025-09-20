@@ -66,6 +66,17 @@ func (og *operationGenerator) columnExistsOnTable(
    )`, tableName.Schema(), tableName.Object(), columnName)
 }
 
+func (og *operationGenerator) fnExistsByName(
+	ctx context.Context, tx pgx.Tx, schemaName string, routineName string,
+) (bool, error) {
+	return og.scanBool(ctx, tx, `SELECT EXISTS (
+	SELECT routine_name
+    FROM information_schema.routines 
+   WHERE routine_schema = $1
+     AND routine_name = $2
+   )`, schemaName, routineName)
+}
+
 func (og *operationGenerator) tableHasRows(
 	ctx context.Context, tx pgx.Tx, tableName *tree.TableName,
 ) (bool, error) {
@@ -292,7 +303,8 @@ func (og *operationGenerator) columnIsDependedOn(
 	// so performing unions and joins is easier.
 	//
 	// To check if any foreign key references exist to this table, we use pg_constraint
-	// and check if any columns are dependent.
+	// and check if any columns are dependent. We check both confrelid (table is referenced)
+	// and self-referential foreign keys (where conrelid = confrelid).
 	return og.scanBool(ctx, tx, `SELECT EXISTS(
 		SELECT source.column_id
 			FROM (
@@ -320,6 +332,12 @@ func (og *operationGenerator) columnIsDependedOn(
 			           SELECT unnest(confkey) AS column_id
 			             FROM pg_catalog.pg_constraint
 			            WHERE confrelid = $1::REGCLASS
+			          )
+			   UNION  (
+			           SELECT unnest(conkey) AS column_id
+			             FROM pg_catalog.pg_constraint
+			            WHERE conrelid = $1::REGCLASS
+			              AND confrelid = $1::REGCLASS
 			          )
 			 ) AS cons
 			 INNER JOIN (
@@ -494,6 +512,28 @@ func isValidGenerationError(code string) bool {
 	return getValidGenerationErrors().contains(pgCode)
 }
 
+// tableHasBeforeInsertTrigger checks if the table has any BEFORE INSERT triggers
+// that could affect the insertion behavior.
+func (og *operationGenerator) tableHasBeforeInsertTrigger(
+	ctx context.Context, tx pgx.Tx, tableName *tree.TableName,
+) (bool, error) {
+	query := `
+	SELECT EXISTS (
+		SELECT 1 FROM pg_trigger t
+		JOIN pg_class c ON t.tgrelid = c.oid
+		JOIN pg_namespace n ON c.relnamespace = n.oid
+		WHERE n.nspname = $1 
+		AND c.relname = $2
+		AND t.tgenabled != 'D'
+		AND (t.tgtype & 2) = 2  -- BEFORE trigger
+		AND (t.tgtype & 4) = 4  -- INSERT trigger
+	)`
+
+	var hasTrigger bool
+	err := tx.QueryRow(ctx, query, tableName.Schema(), tableName.Object()).Scan(&hasTrigger)
+	return hasTrigger, err
+}
+
 // validateGeneratedExpressionsForInsert goes through generated expressions and
 // detects if a valid value can be generated with a given insert row.
 func (og *operationGenerator) validateGeneratedExpressionsForInsert(
@@ -514,6 +554,12 @@ func (og *operationGenerator) validateGeneratedExpressionsForInsert(
 			isInvalidInsert = true
 		}
 	}()
+
+	hasBeforeInsertTrigger, err := og.tableHasBeforeInsertTrigger(ctx, tx, tableName)
+	if err != nil {
+		return false, nil, nil, err
+	}
+
 	// Put values to be inserted into a column name to value map to simplify lookups.
 	columnsToValues := map[tree.Name]string{}
 	for i := 0; i < len(nonGeneratedColNames); i++ {
@@ -601,7 +647,14 @@ func (og *operationGenerator) validateGeneratedExpressionsForInsert(
 		}
 		if isNull && !isNullable && !nullViolationAdded {
 			nullViolationAdded = true
-			expectedErrCodes = expectedErrCodes.append(pgcode.NotNullViolation)
+			// If there is a trigger, then we cannot be sure if the NULL value
+			// will actually be inserted. It may be replaced or the row itself could
+			// be cleared.
+			if hasBeforeInsertTrigger {
+				potentialErrCodes = potentialErrCodes.append(pgcode.NotNullViolation)
+			} else {
+				expectedErrCodes = expectedErrCodes.append(pgcode.NotNullViolation)
+			}
 		}
 		// Re-run the another variant in case we have NULL values in arithmetic
 		// of expression, the evaluation order can differ depending on how variables

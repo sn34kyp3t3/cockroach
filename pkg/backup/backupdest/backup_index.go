@@ -25,6 +25,7 @@ import (
 	"github.com/cockroachdb/cockroach/pkg/sql"
 	"github.com/cockroachdb/cockroach/pkg/util/ctxgroup"
 	"github.com/cockroachdb/cockroach/pkg/util/hlc"
+	"github.com/cockroachdb/cockroach/pkg/util/ioctx"
 	"github.com/cockroachdb/cockroach/pkg/util/metamorphic"
 	"github.com/cockroachdb/cockroach/pkg/util/protoutil"
 	"github.com/cockroachdb/cockroach/pkg/util/tracing"
@@ -52,6 +53,7 @@ func WriteBackupIndexMetadata(
 	user username.SQLUsername,
 	makeExternalStorageFromURI cloud.ExternalStorageFromURIFactory,
 	details jobspb.BackupDetails,
+	revisionStartTS hlc.Timestamp,
 ) error {
 	indexStore, err := makeExternalStorageFromURI(
 		ctx, details.CollectionURI, user,
@@ -81,10 +83,17 @@ func WriteBackupIndexMetadata(
 	if err != nil {
 		return err
 	}
+	mvccFilter := backuppb.MVCCFilter_Latest
+	if details.RevisionHistory {
+		mvccFilter = backuppb.MVCCFilter_All
+	}
 	metadata := &backuppb.BackupIndexMetadata{
-		StartTime: details.StartTime,
-		EndTime:   details.EndTime,
-		Path:      path,
+		StartTime:         details.StartTime,
+		EndTime:           details.EndTime,
+		Path:              path,
+		IsCompacted:       details.Compact,
+		MVCCFilter:        mvccFilter,
+		RevisionStartTime: revisionStartTS,
 	}
 	metadataBytes, err := protoutil.Marshal(metadata)
 	if err != nil {
@@ -120,9 +129,13 @@ func WriteBackupIndexMetadata(
 // words, we can remove these checks in v26.2+.
 func IndexExists(ctx context.Context, store cloud.ExternalStorage, subdir string) (bool, error) {
 	var indexExists bool
+	indexDir, err := indexSubdir(subdir)
+	if err != nil {
+		return false, err
+	}
 	if err := store.List(
 		ctx,
-		indexSubdir(subdir),
+		indexDir,
 		"/",
 		func(file string) error {
 			indexExists = true
@@ -150,9 +163,13 @@ func ListIndexes(
 	ctx context.Context, store cloud.ExternalStorage, subdir string,
 ) ([]string, error) {
 	var indexBasenames []string
+	indexDir, err := indexSubdir(subdir)
+	if err != nil {
+		return nil, err
+	}
 	if err := store.List(
 		ctx,
-		indexSubdir(subdir)+"/",
+		indexDir+"/",
 		"",
 		func(file string) error {
 			indexBasenames = append(indexBasenames, path.Base(file))
@@ -204,18 +221,11 @@ func ListIndexes(
 }
 
 // GetBackupTreeIndexMetadata concurrently retrieves the index metadata for all
-// backups within the specified subdir, up to the specified end time, inclusive.
-// The store should be rooted at the collection URI that contains the `index/`
-// directory. Indexes are returned in ascending end time order, with ties broken
-// by ascending start time order. If the end time is not covered by the backups
-// in the subdir, an error is returned.
-//
-// Note: If endTime is provided, GetBackupTreeIndexMetadata will return ALL
-// backups that could be used to restore to endTime. So even if a compacted
-// backup can be used to restore to endTime, the incremental backups that
-// make up the compacted backup will also be returned.
+// backups within the specified subdir. The store should be rooted at the
+// collection URI that contains the `index/` directory. Indexes are returned in
+// ascending end time order, with ties broken by ascending start time order.
 func GetBackupTreeIndexMetadata(
-	ctx context.Context, store cloud.ExternalStorage, subdir string, endTime hlc.Timestamp,
+	ctx context.Context, store cloud.ExternalStorage, subdir string,
 ) ([]backuppb.BackupIndexMetadata, error) {
 	indexBasenames, err := ListIndexes(ctx, store, subdir)
 	if err != nil {
@@ -226,17 +236,21 @@ func GetBackupTreeIndexMetadata(
 	g := ctxgroup.WithContext(ctx)
 	for i, basename := range indexBasenames {
 		g.GoCtx(func(ctx context.Context) error {
-			reader, size, err := store.ReadFile(
-				ctx, path.Join(indexSubdir(subdir), basename), cloud.ReadOptions{},
+			indexDir, err := indexSubdir(subdir)
+			if err != nil {
+				return err
+			}
+			reader, _, err := store.ReadFile(
+				ctx, path.Join(indexDir, basename), cloud.ReadOptions{},
 			)
 			if err != nil {
 				return errors.Wrapf(err, "reading index file %s", basename)
 			}
 			defer reader.Close(ctx)
 
-			bytes := make([]byte, size)
-			if _, err := reader.Read(ctx, bytes); err != nil {
-				return errors.Wrapf(err, "reading index file %s bytes", basename)
+			bytes, err := ioctx.ReadAll(ctx, reader)
+			if err != nil {
+				return errors.Wrapf(err, "reading index file %s", basename)
 			}
 
 			index := backuppb.BackupIndexMetadata{}
@@ -252,25 +266,7 @@ func GetBackupTreeIndexMetadata(
 		return nil, errors.Wrapf(err, "getting backup index metadata")
 	}
 
-	if endTime.IsEmpty() {
-		return indexes, nil
-	}
-
-	coveringIdx := slices.IndexFunc(indexes, func(index backuppb.BackupIndexMetadata) bool {
-		return index.StartTime.Less(endTime) && endTime.LessEq(index.EndTime)
-	})
-	if coveringIdx == -1 {
-		return nil, errors.Newf(`backups in "%s" do not cover end time %s`, subdir, endTime)
-	}
-	coverEndTime := indexes[coveringIdx].EndTime
-	// To include all components of a compacted backup, we need to include all
-	// backups with the same end time.
-	for ; coveringIdx < len(indexes); coveringIdx++ {
-		if !indexes[coveringIdx].EndTime.Equal(coverEndTime) {
-			break
-		}
-	}
-	return indexes[:coveringIdx], nil
+	return indexes, nil
 }
 
 // ParseBackupFilePathFromIndexFileName parses the path to a backup given the
@@ -325,6 +321,30 @@ func parseIndexFilename(basename string) (start time.Time, end time.Time, err er
 	return start, end, nil
 }
 
+// ListSubdirsFromIndex lists the paths of all full backup subdirectories that
+// have an entry in the index. The store should be rooted at the default
+// collection URI. The subdirs are returned in chronological order.
+func ListSubdirsFromIndex(ctx context.Context, store cloud.ExternalStorage) ([]string, error) {
+	var subdirs []string
+	if err := store.List(
+		ctx,
+		backupbase.BackupIndexDirectoryPath,
+		"/",
+		func(indexSubdir string) error {
+			indexSubdir = strings.TrimSuffix(indexSubdir, "/")
+			subdir, err := unflattenIndexSubdir(indexSubdir)
+			if err != nil {
+				return err
+			}
+			subdirs = append(subdirs, subdir)
+			return nil
+		},
+	); err != nil {
+		return nil, errors.Wrapf(err, "listing index subdirs")
+	}
+	return subdirs, nil
+}
+
 // shouldWriteIndex determines if a backup index file should be written for a
 // given backup. The rule is:
 //  1. An index should only be written on a v25.4+ cluster.
@@ -371,8 +391,12 @@ func getBackupIndexFilePath(subdir string, startTime, endTime hlc.Timestamp) (st
 	if strings.EqualFold(subdir, backupbase.LatestFileName) {
 		return "", errors.AssertionFailedf("expected subdir to be resolved and not be 'LATEST'")
 	}
+	indexDir, err := indexSubdir(subdir)
+	if err != nil {
+		return "", err
+	}
 	return backuputils.JoinURLPath(
-		indexSubdir(subdir),
+		indexDir,
 		getBackupIndexFileName(startTime, endTime),
 	), nil
 }
@@ -397,8 +421,12 @@ func getBackupIndexFileName(startTime, endTime hlc.Timestamp) string {
 // path for a given full backup subdir. The path is relative to the root of the
 // collection URI and does not contain a trailing slash. It assumes that subdir
 // has been resolved and is not `LATEST`.
-func indexSubdir(subdir string) string {
-	return path.Join(backupbase.BackupIndexDirectoryPath, flattenSubdirForIndex(subdir))
+func indexSubdir(subdir string) (string, error) {
+	flattened, err := flattenSubdirForIndex(subdir)
+	if err != nil {
+		return "", err
+	}
+	return path.Join(backupbase.BackupIndexDirectoryPath, flattened), nil
 }
 
 // flattenSubdirForIndex flattens a full backup subdirectory to be used in the
@@ -418,11 +446,25 @@ func indexSubdir(subdir string) string {
 //
 // Listing on `index/` and delimiting on `/` will return the subdirectories
 // without listing the files in them.
-func flattenSubdirForIndex(subdir string) string {
-	return strings.ReplaceAll(
-		// Trimming any trailing and leading slashes guarantees a specific format when
-		// returning the flattened subdir, so callers can expect a consistent result.
-		strings.TrimSuffix(strings.TrimPrefix(subdir, "/"), "/"),
-		"/", "-",
-	)
+func flattenSubdirForIndex(subdir string) (string, error) {
+	subdirTime, err := time.Parse(backupbase.DateBasedIntoFolderName, subdir)
+	if err != nil {
+		return "", errors.Wrapf(
+			err, "subdir does not match format '%s'", backupbase.DateBasedIntoFolderName,
+		)
+	}
+	return subdirTime.Format(backupbase.BackupIndexFlattenedSubdir), nil
+}
+
+// unflattenIndexSubdir is the inverse of flattenSubdirForIndex. It converts a
+// flattened index subdir back to the original full backup subdir.
+func unflattenIndexSubdir(flattened string) (string, error) {
+	subdirTime, err := time.Parse(backupbase.BackupIndexFlattenedSubdir, flattened)
+	if err != nil {
+		return "", errors.Wrapf(
+			err, "index subdir does not match format %s", backupbase.BackupIndexFlattenedSubdir,
+		)
+	}
+	unflattened := subdirTime.Format(backupbase.DateBasedIntoFolderName)
+	return unflattened, nil
 }

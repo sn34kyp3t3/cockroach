@@ -1671,6 +1671,9 @@ type ExecutorConfig struct {
 	// StmtDiagnosticsRecorder deals with recording statement diagnostics.
 	StmtDiagnosticsRecorder *stmtdiagnostics.Registry
 
+	// TxnDiagnosticsRecorder deals with recording transaction diagnostics.
+	TxnDiagnosticsRecorder *stmtdiagnostics.TxnRegistry
+
 	ExternalIODirConfig base.ExternalIODirConfig
 
 	GCJobNotifier *gcjobnotifier.Notifier
@@ -2098,6 +2101,8 @@ type InspectTestingKnobs struct {
 	// OnInspectJobStart is called just before the inspect job begins execution.
 	// If it returns an error, the job fails immediately.
 	OnInspectJobStart func() error
+	// InspectIssueLogger is an override to the default issue logger.
+	InspectIssueLogger interface{}
 }
 
 // ModuleTestingKnobs implements the base.ModuleTestingKnobs interface.
@@ -4378,6 +4383,10 @@ func (m *sessionDataMutator) SetEnableScrubJob(val bool) {
 	m.data.EnableScrubJob = val
 }
 
+func (m *sessionDataMutator) SetEnableInspectCommand(val bool) {
+	m.data.EnableInspectCommand = val
+}
+
 func (m *sessionDataMutator) SetInitialRetryBackoffForReadCommitted(val time.Duration) {
 	m.data.InitialRetryBackoffForReadCommitted = val
 }
@@ -4449,38 +4458,11 @@ func scrubStmtStatKey(vt VirtualTabler, key string, ns eval.ClientNoticeSender) 
 	return f.CloseAndGetString(), true
 }
 
-var redactNamesInSQLStatementLog = settings.RegisterBoolSetting(
-	settings.ApplicationLevel,
-	"sql.log.redact_names.enabled",
-	"if set, schema object identifers are redacted in SQL statements that appear in event logs",
-	false,
-	settings.WithPublic,
-)
-
 // FormatAstAsRedactableString implements scbuild.AstFormatter
 func (p *planner) FormatAstAsRedactableString(
 	statement tree.Statement, annotations *tree.Annotations,
 ) redact.RedactableString {
-	fs := tree.FmtSimple | tree.FmtAlwaysQualifyTableNames | tree.FmtMarkRedactionNode
-	if !redactNamesInSQLStatementLog.Get(&p.extendedEvalCtx.Settings.SV) {
-		fs = fs | tree.FmtOmitNameRedaction
-	}
-	return formatStmtKeyAsRedactableString(statement, annotations, fs)
-}
-
-// formatStmtKeyAsRedactableString given an AST node this function will fully
-// qualify names using annotations to format it out into a redactable string.
-// Object names are not redacted, but constants and datums are.
-func formatStmtKeyAsRedactableString(
-	rootAST tree.Statement, ann *tree.Annotations, fs tree.FmtFlags,
-) redact.RedactableString {
-	f := tree.NewFmtCtx(
-		fs,
-		tree.FmtAnnotations(ann),
-	)
-	f.FormatNode(rootAST)
-	formattedRedactableStatementString := f.CloseAndGetString()
-	return redact.RedactableString(formattedRedactableStatementString)
+	return tree.FormatAstAsRedactableString(statement, annotations, &p.extendedEvalCtx.Settings.SV)
 }
 
 // FailedHashedValue is used as a default return value for when HashForReporting

@@ -419,9 +419,9 @@ func (s *state) Replicas(storeID StoreID) []Replica {
 	return repls
 }
 
-// AddNode modifies the state to include one additional node. This cannot
-// fail. The new Node is returned.
-func (s *state) AddNode() Node {
+// AddNode modifies the state to include one additional node. This cannot fail.
+// The new Node is returned.
+func (s *state) AddNode(nodeCPUCapacity int64, locality roachpb.Locality) Node {
 	s.nodeSeqGen++
 	nodeID := s.nodeSeqGen
 	mmAllocator := mmaprototype.NewAllocatorState(s.clock, rand.New(rand.NewSource(s.settings.Seed)))
@@ -437,6 +437,8 @@ func (s *state) AddNode() Node {
 	}
 	s.nodes[nodeID] = node
 	s.SetNodeLiveness(nodeID, livenesspb.NodeLivenessStatus_LIVE)
+	s.SetNodeLocality(nodeID, locality)
+	s.SetNodeCPURateCapacity(nodeID, nodeCPUCapacity)
 	return node
 }
 func (s *state) SetNodeLocality(nodeID NodeID, locality roachpb.Locality) {
@@ -1089,7 +1091,7 @@ func (s *state) applyLoad(rng *rng, le workload.LoadEvent) {
 func (s *state) RangeUsageInfo(rangeID RangeID, storeID StoreID) allocator.RangeUsageInfo {
 	r, ok := s.Range(rangeID)
 	if !ok {
-		panic(fmt.Sprintf("no leaseholder store found for range %d", storeID))
+		panic(fmt.Sprintf("no leaseholder store found for range %d", rangeID))
 	}
 
 	if _, ok = r.Replica(storeID); !ok {
@@ -1423,6 +1425,47 @@ func (s *state) SetSimulationSettings(Key string, Value interface{}) {
 			break
 		}
 	}
+}
+
+func (s *state) NodesStringWithTag(tag string) string {
+	var buf strings.Builder
+
+	nodes := make([]*node, 0, len(s.nodes))
+	for _, node := range s.nodes {
+		nodes = append(nodes, node)
+	}
+	slices.SortFunc(nodes, func(a, b *node) int {
+		return cmp.Compare(a.nodeID, b.nodeID)
+	})
+
+	for nID, n := range nodes {
+		_, _ = fmt.Fprintf(&buf, "%sn%d(", tag, n.nodeID)
+		for _, locality := range n.desc.Locality.Tiers {
+			_, _ = fmt.Fprintf(&buf, "%s,", locality.Value)
+		}
+		_, _ = fmt.Fprintf(&buf, "%dvcpu): {",
+			n.cpuRateCapacity/time.Second.Nanoseconds())
+		for i, store := range n.Stores() {
+			s, ok := s.Store(store)
+			if ok {
+				attrStr := ""
+				if attrs := s.Descriptor().Attrs; attrs.Size() != 0 {
+					attrStr = fmt.Sprintf("%v,", attrs)
+				}
+				_, _ = fmt.Fprintf(&buf, "s%d:(%s%vGiB)", store, attrStr, s.Descriptor().Capacity.Capacity>>30)
+			} else {
+				_, _ = fmt.Fprintf(&buf, "s%d:notfound", store)
+			}
+			if i < len(n.Stores())-1 {
+				_, _ = fmt.Fprintf(&buf, ",")
+			}
+		}
+		_, _ = fmt.Fprintf(&buf, "}")
+		if nID != len(nodes)-1 {
+			_, _ = fmt.Fprintf(&buf, "\n")
+		}
+	}
+	return buf.String()
 }
 
 // node is an implementation of the Node interface.

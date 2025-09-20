@@ -1306,6 +1306,7 @@ deprules
     - $descriptor-data-Node[CurrentStatus] = PUBLIC
     - $descriptor-data[DescID] = $descID
     - descriptorIsDataNotBeingAdded-25.4($descID)
+    - skip indexes that no require no backfill(scpb.Element, scpb.Element)($prev, $next)
     - joinTargetNode($prev, $prev-Target, $prev-Node)
     - joinTargetNode($next, $next-Target, $next-Node)
 - name: 'PrimaryIndex transitions to PUBLIC uphold 2-version invariant: BACKFILLED->DELETE_ONLY'
@@ -1327,6 +1328,7 @@ deprules
     - $descriptor-data-Node[CurrentStatus] = PUBLIC
     - $descriptor-data[DescID] = $descID
     - descriptorIsDataNotBeingAdded-25.4($descID)
+    - skip indexes that no require no backfill(scpb.Element, scpb.Element)($prev, $next)
     - joinTargetNode($prev, $prev-Target, $prev-Node)
     - joinTargetNode($next, $next-Target, $next-Node)
 - name: 'PrimaryIndex transitions to PUBLIC uphold 2-version invariant: BACKFILL_ONLY->BACKFILLED'
@@ -1348,6 +1350,7 @@ deprules
     - $descriptor-data-Node[CurrentStatus] = PUBLIC
     - $descriptor-data[DescID] = $descID
     - descriptorIsDataNotBeingAdded-25.4($descID)
+    - skip indexes that no require no backfill(scpb.Element, scpb.Element)($prev, $next)
     - joinTargetNode($prev, $prev-Target, $prev-Node)
     - joinTargetNode($next, $next-Target, $next-Node)
 - name: 'PrimaryIndex transitions to PUBLIC uphold 2-version invariant: DELETE_ONLY->MERGE_ONLY'
@@ -1369,6 +1372,7 @@ deprules
     - $descriptor-data-Node[CurrentStatus] = PUBLIC
     - $descriptor-data[DescID] = $descID
     - descriptorIsDataNotBeingAdded-25.4($descID)
+    - skip indexes that no require no backfill(scpb.Element, scpb.Element)($prev, $next)
     - joinTargetNode($prev, $prev-Target, $prev-Node)
     - joinTargetNode($next, $next-Target, $next-Node)
 - name: 'PrimaryIndex transitions to PUBLIC uphold 2-version invariant: MERGED->WRITE_ONLY'
@@ -1390,6 +1394,7 @@ deprules
     - $descriptor-data-Node[CurrentStatus] = PUBLIC
     - $descriptor-data[DescID] = $descID
     - descriptorIsDataNotBeingAdded-25.4($descID)
+    - skip indexes that no require no backfill(scpb.Element, scpb.Element)($prev, $next)
     - joinTargetNode($prev, $prev-Target, $prev-Node)
     - joinTargetNode($next, $next-Target, $next-Node)
 - name: 'PrimaryIndex transitions to PUBLIC uphold 2-version invariant: MERGE_ONLY->MERGED'
@@ -1411,6 +1416,7 @@ deprules
     - $descriptor-data-Node[CurrentStatus] = PUBLIC
     - $descriptor-data[DescID] = $descID
     - descriptorIsDataNotBeingAdded-25.4($descID)
+    - skip indexes that no require no backfill(scpb.Element, scpb.Element)($prev, $next)
     - joinTargetNode($prev, $prev-Target, $prev-Node)
     - joinTargetNode($next, $next-Target, $next-Node)
 - name: 'PrimaryIndex transitions to PUBLIC uphold 2-version invariant: VALIDATED->PUBLIC'
@@ -1432,6 +1438,7 @@ deprules
     - $descriptor-data-Node[CurrentStatus] = PUBLIC
     - $descriptor-data[DescID] = $descID
     - descriptorIsDataNotBeingAdded-25.4($descID)
+    - skip indexes that no require no backfill(scpb.Element, scpb.Element)($prev, $next)
     - joinTargetNode($prev, $prev-Target, $prev-Node)
     - joinTargetNode($next, $next-Target, $next-Node)
 - name: 'PrimaryIndex transitions to PUBLIC uphold 2-version invariant: WRITE_ONLY->VALIDATED'
@@ -1453,6 +1460,7 @@ deprules
     - $descriptor-data-Node[CurrentStatus] = PUBLIC
     - $descriptor-data[DescID] = $descID
     - descriptorIsDataNotBeingAdded-25.4($descID)
+    - skip indexes that no require no backfill(scpb.Element, scpb.Element)($prev, $next)
     - joinTargetNode($prev, $prev-Target, $prev-Node)
     - joinTargetNode($next, $next-Target, $next-Node)
 - name: 'PrimaryIndex transitions to TRANSIENT_ABSENT uphold 2-version invariant: ABSENT->BACKFILL_ONLY'
@@ -1982,6 +1990,7 @@ deprules
     - $descriptor-data-Node[CurrentStatus] = PUBLIC
     - $descriptor-data[DescID] = $descID
     - descriptorIsDataNotBeingAdded-25.4($descID)
+    - skip indexes that no require no backfill(scpb.Element, scpb.Element)($prev, $next)
     - joinTargetNode($prev, $prev-Target, $prev-Node)
     - joinTargetNode($next, $next-Target, $next-Node)
 - name: 'SecondaryIndex transitions to PUBLIC uphold 2-version invariant: BACKFILLED->DELETE_ONLY'
@@ -2003,6 +2012,7 @@ deprules
     - $descriptor-data-Node[CurrentStatus] = PUBLIC
     - $descriptor-data[DescID] = $descID
     - descriptorIsDataNotBeingAdded-25.4($descID)
+    - skip indexes that no require no backfill(scpb.Element, scpb.Element)($prev, $next)
     - joinTargetNode($prev, $prev-Target, $prev-Node)
     - joinTargetNode($next, $next-Target, $next-Node)
 - name: 'SecondaryIndex transitions to PUBLIC uphold 2-version invariant: BACKFILL_ONLY->BACKFILLED'
@@ -2024,6 +2034,7 @@ deprules
     - $descriptor-data-Node[CurrentStatus] = PUBLIC
     - $descriptor-data[DescID] = $descID
     - descriptorIsDataNotBeingAdded-25.4($descID)
+    - skip indexes that no require no backfill(scpb.Element, scpb.Element)($prev, $next)
     - joinTargetNode($prev, $prev-Target, $prev-Node)
     - joinTargetNode($next, $next-Target, $next-Node)
 - name: 'SecondaryIndex transitions to PUBLIC uphold 2-version invariant: DELETE_ONLY->MERGE_ONLY'
@@ -2045,6 +2056,7 @@ deprules
     - $descriptor-data-Node[CurrentStatus] = PUBLIC
     - $descriptor-data[DescID] = $descID
     - descriptorIsDataNotBeingAdded-25.4($descID)
+    - skip indexes that no require no backfill(scpb.Element, scpb.Element)($prev, $next)
     - joinTargetNode($prev, $prev-Target, $prev-Node)
     - joinTargetNode($next, $next-Target, $next-Node)
 - name: 'SecondaryIndex transitions to PUBLIC uphold 2-version invariant: MERGED->WRITE_ONLY'
@@ -2066,6 +2078,7 @@ deprules
     - $descriptor-data-Node[CurrentStatus] = PUBLIC
     - $descriptor-data[DescID] = $descID
     - descriptorIsDataNotBeingAdded-25.4($descID)
+    - skip indexes that no require no backfill(scpb.Element, scpb.Element)($prev, $next)
     - joinTargetNode($prev, $prev-Target, $prev-Node)
     - joinTargetNode($next, $next-Target, $next-Node)
 - name: 'SecondaryIndex transitions to PUBLIC uphold 2-version invariant: MERGE_ONLY->MERGED'
@@ -2087,6 +2100,7 @@ deprules
     - $descriptor-data-Node[CurrentStatus] = PUBLIC
     - $descriptor-data[DescID] = $descID
     - descriptorIsDataNotBeingAdded-25.4($descID)
+    - skip indexes that no require no backfill(scpb.Element, scpb.Element)($prev, $next)
     - joinTargetNode($prev, $prev-Target, $prev-Node)
     - joinTargetNode($next, $next-Target, $next-Node)
 - name: 'SecondaryIndex transitions to PUBLIC uphold 2-version invariant: VALIDATED->PUBLIC'
@@ -2108,6 +2122,7 @@ deprules
     - $descriptor-data-Node[CurrentStatus] = PUBLIC
     - $descriptor-data[DescID] = $descID
     - descriptorIsDataNotBeingAdded-25.4($descID)
+    - skip indexes that no require no backfill(scpb.Element, scpb.Element)($prev, $next)
     - joinTargetNode($prev, $prev-Target, $prev-Node)
     - joinTargetNode($next, $next-Target, $next-Node)
 - name: 'SecondaryIndex transitions to PUBLIC uphold 2-version invariant: WRITE_ONLY->VALIDATED'
@@ -2129,6 +2144,7 @@ deprules
     - $descriptor-data-Node[CurrentStatus] = PUBLIC
     - $descriptor-data[DescID] = $descID
     - descriptorIsDataNotBeingAdded-25.4($descID)
+    - skip indexes that no require no backfill(scpb.Element, scpb.Element)($prev, $next)
     - joinTargetNode($prev, $prev-Target, $prev-Node)
     - joinTargetNode($next, $next-Target, $next-Node)
 - name: 'TableSchemaLocked transitions to ABSENT uphold 2-version invariant: PUBLIC->ABSENT'
@@ -4170,6 +4186,20 @@ deprules
     - $referenced-column-name-Node[CurrentStatus] = TRANSIENT_ABSENT
     - joinTargetNode($constraint, $constraint-Target, $constraint-Node)
     - joinTargetNode($referenced-column-name, $referenced-column-name-Target, $referenced-column-name-Node)
+- name: old column name is dropped before new column name is added
+  from: old-column-name-Node
+  kind: Precedence
+  to: new-column-name-Node
+  query:
+    - $old-column-name[Type] = '*scpb.ColumnName'
+    - $new-column-name[Type] = '*scpb.ColumnName'
+    - joinOnColumnID($old-column-name, $new-column-name, $table-id, $col-id)
+    - $old-column-name-Target[TargetStatus] = ABSENT
+    - $old-column-name-Node[CurrentStatus] = ABSENT
+    - $new-column-name-Target[TargetStatus] = PUBLIC
+    - $new-column-name-Node[CurrentStatus] = PUBLIC
+    - joinTargetNode($old-column-name, $old-column-name-Target, $old-column-name-Node)
+    - joinTargetNode($new-column-name, $new-column-name-Target, $new-column-name-Node)
 - name: old index absent before new index public when swapping with transient
   from: old-primary-index-Node
   kind: Precedence
@@ -4190,6 +4220,49 @@ deprules
     - $new-primary-index-Node[CurrentStatus] = PUBLIC
     - joinTargetNode($old-primary-index, $old-primary-index-Target, $old-primary-index-Node)
     - joinTargetNode($new-primary-index, $new-primary-index-Target, $new-primary-index-Node)
+- name: old secondary indexes that have been recreated should be removed when their replacement is usable.
+  from: new-primary-index-Node
+  kind: SameStagePrecedence
+  to: old-secondary-index-Node
+  query:
+    - $old-secondary-index[Type] = '*scpb.PrimaryIndex'
+    - $new-primary-index[Type] = '*scpb.SecondaryIndex'
+    - joinOnDescID($new-primary-index, $old-secondary-index, $table-id)
+    - $new-primary-index-Target[TargetStatus] = ABSENT
+    - $new-primary-index-Node[CurrentStatus] = VALIDATED
+    - $old-secondary-index-Target[TargetStatus] = PUBLIC
+    - $old-secondary-index-Node[CurrentStatus] = PUBLIC
+    - $new-index[RecreateTargetIndexID] = $new-primary-index-id
+    - $old-secondary-index[IndexID] = $new-primary-index-id
+    - only apply to secondary indexes created after 25.4(*scpb.PrimaryIndex, *scpb.SecondaryIndex)($new-primary-index, $old-secondary-index)
+    - $new-primary-index[Type] = '*scpb.SecondaryIndex'
+    - $new-index[Type] = '*scpb.SecondaryIndex'
+    - $new-primary-index-Target[TargetStatus] = ABSENT
+    - $new-index-Target[TargetStatus] IN [PUBLIC, TRANSIENT_ABSENT]
+    - joinOnDescID($new-primary-index, $new-index, $table-id)
+    - $new-index[IndexID] = $index-id
+    - $new-primary-index[IndexID] = $old-index-id
+    - $new-index[RecreateSourceIndexID] = $old-index-id
+    - joinTargetNode($new-primary-index, $new-primary-index-Target, $new-primary-index-Node)
+    - joinTargetNode($new-index, $new-index-Target, $new-index-Node)
+    - joinTargetNode($new-primary-index, $new-primary-index-Target, $new-primary-index-Node)
+    - joinTargetNode($old-secondary-index, $old-secondary-index-Target, $old-secondary-index-Node)
+- name: old table namespace is dropped before new table namespace is added
+  from: old-namespace-Node
+  kind: Precedence
+  to: new-namespace-Node
+  query:
+    - $old-namespace[Type] = '*scpb.Namespace'
+    - $new-namespace[Type] = '*scpb.Namespace'
+    - $old-namespace[Type] = $same-type
+    - $new-namespace[Type] = $same-type
+    - joinOnDescID($old-namespace, $new-namespace, $desc-id)
+    - $old-namespace-Target[TargetStatus] = ABSENT
+    - $old-namespace-Node[CurrentStatus] = ABSENT
+    - $new-namespace-Target[TargetStatus] = PUBLIC
+    - $new-namespace-Node[CurrentStatus] = PUBLIC
+    - joinTargetNode($old-namespace, $old-namespace-Target, $old-namespace-Node)
+    - joinTargetNode($new-namespace, $new-namespace-Target, $new-namespace-Node)
 - name: policy dependents are swapped in order
   from: drop-policy-dependent-Node
   kind: Precedence
@@ -4529,15 +4602,15 @@ deprules
     - $index-Node[CurrentStatus] = VALIDATED
     - $index-name-Node[CurrentStatus] = PUBLIC
     - $old-index[Type] = '*scpb.SecondaryIndex'
-    - $new-index[Type] = '*scpb.SecondaryIndex'
+    - $index[Type] = '*scpb.SecondaryIndex'
     - $old-index-Target[TargetStatus] = ABSENT
-    - $new-index-Target[TargetStatus] IN [PUBLIC, TRANSIENT_ABSENT]
-    - joinOnDescID($old-index, $new-index, $table-id)
-    - $new-index[IndexID] = $index-id
+    - $index-Target[TargetStatus] IN [PUBLIC, TRANSIENT_ABSENT]
+    - joinOnDescID($old-index, $index, $table-id)
+    - $index[IndexID] = $index-id
     - $old-index[IndexID] = $old-index-id
-    - $new-index[RecreateSourceIndexID] = $old-index-id
+    - $index[RecreateSourceIndexID] = $old-index-id
     - joinTargetNode($old-index, $old-index-Target, $old-index-Node)
-    - joinTargetNode($new-index, $new-index-Target, $new-index-Node)
+    - joinTargetNode($index, $index-Target, $index-Node)
     - joinTargetNode($index, $index-Target, $index-Node)
     - joinTargetNode($index-name, $index-name-Target, $index-name-Node)
 - name: secondary index named before validation (without index swap)
@@ -6201,6 +6274,7 @@ deprules
     - $descriptor-data-Node[CurrentStatus] = PUBLIC
     - $descriptor-data[DescID] = $descID
     - descriptorIsDataNotBeingAdded-25.4($descID)
+    - skip indexes that no require no backfill(scpb.Element, scpb.Element)($prev, $next)
     - joinTargetNode($prev, $prev-Target, $prev-Node)
     - joinTargetNode($next, $next-Target, $next-Node)
 - name: 'PrimaryIndex transitions to PUBLIC uphold 2-version invariant: BACKFILLED->DELETE_ONLY'
@@ -6222,6 +6296,7 @@ deprules
     - $descriptor-data-Node[CurrentStatus] = PUBLIC
     - $descriptor-data[DescID] = $descID
     - descriptorIsDataNotBeingAdded-25.4($descID)
+    - skip indexes that no require no backfill(scpb.Element, scpb.Element)($prev, $next)
     - joinTargetNode($prev, $prev-Target, $prev-Node)
     - joinTargetNode($next, $next-Target, $next-Node)
 - name: 'PrimaryIndex transitions to PUBLIC uphold 2-version invariant: BACKFILL_ONLY->BACKFILLED'
@@ -6243,6 +6318,7 @@ deprules
     - $descriptor-data-Node[CurrentStatus] = PUBLIC
     - $descriptor-data[DescID] = $descID
     - descriptorIsDataNotBeingAdded-25.4($descID)
+    - skip indexes that no require no backfill(scpb.Element, scpb.Element)($prev, $next)
     - joinTargetNode($prev, $prev-Target, $prev-Node)
     - joinTargetNode($next, $next-Target, $next-Node)
 - name: 'PrimaryIndex transitions to PUBLIC uphold 2-version invariant: DELETE_ONLY->MERGE_ONLY'
@@ -6264,6 +6340,7 @@ deprules
     - $descriptor-data-Node[CurrentStatus] = PUBLIC
     - $descriptor-data[DescID] = $descID
     - descriptorIsDataNotBeingAdded-25.4($descID)
+    - skip indexes that no require no backfill(scpb.Element, scpb.Element)($prev, $next)
     - joinTargetNode($prev, $prev-Target, $prev-Node)
     - joinTargetNode($next, $next-Target, $next-Node)
 - name: 'PrimaryIndex transitions to PUBLIC uphold 2-version invariant: MERGED->WRITE_ONLY'
@@ -6285,6 +6362,7 @@ deprules
     - $descriptor-data-Node[CurrentStatus] = PUBLIC
     - $descriptor-data[DescID] = $descID
     - descriptorIsDataNotBeingAdded-25.4($descID)
+    - skip indexes that no require no backfill(scpb.Element, scpb.Element)($prev, $next)
     - joinTargetNode($prev, $prev-Target, $prev-Node)
     - joinTargetNode($next, $next-Target, $next-Node)
 - name: 'PrimaryIndex transitions to PUBLIC uphold 2-version invariant: MERGE_ONLY->MERGED'
@@ -6306,6 +6384,7 @@ deprules
     - $descriptor-data-Node[CurrentStatus] = PUBLIC
     - $descriptor-data[DescID] = $descID
     - descriptorIsDataNotBeingAdded-25.4($descID)
+    - skip indexes that no require no backfill(scpb.Element, scpb.Element)($prev, $next)
     - joinTargetNode($prev, $prev-Target, $prev-Node)
     - joinTargetNode($next, $next-Target, $next-Node)
 - name: 'PrimaryIndex transitions to PUBLIC uphold 2-version invariant: VALIDATED->PUBLIC'
@@ -6327,6 +6406,7 @@ deprules
     - $descriptor-data-Node[CurrentStatus] = PUBLIC
     - $descriptor-data[DescID] = $descID
     - descriptorIsDataNotBeingAdded-25.4($descID)
+    - skip indexes that no require no backfill(scpb.Element, scpb.Element)($prev, $next)
     - joinTargetNode($prev, $prev-Target, $prev-Node)
     - joinTargetNode($next, $next-Target, $next-Node)
 - name: 'PrimaryIndex transitions to PUBLIC uphold 2-version invariant: WRITE_ONLY->VALIDATED'
@@ -6348,6 +6428,7 @@ deprules
     - $descriptor-data-Node[CurrentStatus] = PUBLIC
     - $descriptor-data[DescID] = $descID
     - descriptorIsDataNotBeingAdded-25.4($descID)
+    - skip indexes that no require no backfill(scpb.Element, scpb.Element)($prev, $next)
     - joinTargetNode($prev, $prev-Target, $prev-Node)
     - joinTargetNode($next, $next-Target, $next-Node)
 - name: 'PrimaryIndex transitions to TRANSIENT_ABSENT uphold 2-version invariant: ABSENT->BACKFILL_ONLY'
@@ -6877,6 +6958,7 @@ deprules
     - $descriptor-data-Node[CurrentStatus] = PUBLIC
     - $descriptor-data[DescID] = $descID
     - descriptorIsDataNotBeingAdded-25.4($descID)
+    - skip indexes that no require no backfill(scpb.Element, scpb.Element)($prev, $next)
     - joinTargetNode($prev, $prev-Target, $prev-Node)
     - joinTargetNode($next, $next-Target, $next-Node)
 - name: 'SecondaryIndex transitions to PUBLIC uphold 2-version invariant: BACKFILLED->DELETE_ONLY'
@@ -6898,6 +6980,7 @@ deprules
     - $descriptor-data-Node[CurrentStatus] = PUBLIC
     - $descriptor-data[DescID] = $descID
     - descriptorIsDataNotBeingAdded-25.4($descID)
+    - skip indexes that no require no backfill(scpb.Element, scpb.Element)($prev, $next)
     - joinTargetNode($prev, $prev-Target, $prev-Node)
     - joinTargetNode($next, $next-Target, $next-Node)
 - name: 'SecondaryIndex transitions to PUBLIC uphold 2-version invariant: BACKFILL_ONLY->BACKFILLED'
@@ -6919,6 +7002,7 @@ deprules
     - $descriptor-data-Node[CurrentStatus] = PUBLIC
     - $descriptor-data[DescID] = $descID
     - descriptorIsDataNotBeingAdded-25.4($descID)
+    - skip indexes that no require no backfill(scpb.Element, scpb.Element)($prev, $next)
     - joinTargetNode($prev, $prev-Target, $prev-Node)
     - joinTargetNode($next, $next-Target, $next-Node)
 - name: 'SecondaryIndex transitions to PUBLIC uphold 2-version invariant: DELETE_ONLY->MERGE_ONLY'
@@ -6940,6 +7024,7 @@ deprules
     - $descriptor-data-Node[CurrentStatus] = PUBLIC
     - $descriptor-data[DescID] = $descID
     - descriptorIsDataNotBeingAdded-25.4($descID)
+    - skip indexes that no require no backfill(scpb.Element, scpb.Element)($prev, $next)
     - joinTargetNode($prev, $prev-Target, $prev-Node)
     - joinTargetNode($next, $next-Target, $next-Node)
 - name: 'SecondaryIndex transitions to PUBLIC uphold 2-version invariant: MERGED->WRITE_ONLY'
@@ -6961,6 +7046,7 @@ deprules
     - $descriptor-data-Node[CurrentStatus] = PUBLIC
     - $descriptor-data[DescID] = $descID
     - descriptorIsDataNotBeingAdded-25.4($descID)
+    - skip indexes that no require no backfill(scpb.Element, scpb.Element)($prev, $next)
     - joinTargetNode($prev, $prev-Target, $prev-Node)
     - joinTargetNode($next, $next-Target, $next-Node)
 - name: 'SecondaryIndex transitions to PUBLIC uphold 2-version invariant: MERGE_ONLY->MERGED'
@@ -6982,6 +7068,7 @@ deprules
     - $descriptor-data-Node[CurrentStatus] = PUBLIC
     - $descriptor-data[DescID] = $descID
     - descriptorIsDataNotBeingAdded-25.4($descID)
+    - skip indexes that no require no backfill(scpb.Element, scpb.Element)($prev, $next)
     - joinTargetNode($prev, $prev-Target, $prev-Node)
     - joinTargetNode($next, $next-Target, $next-Node)
 - name: 'SecondaryIndex transitions to PUBLIC uphold 2-version invariant: VALIDATED->PUBLIC'
@@ -7003,6 +7090,7 @@ deprules
     - $descriptor-data-Node[CurrentStatus] = PUBLIC
     - $descriptor-data[DescID] = $descID
     - descriptorIsDataNotBeingAdded-25.4($descID)
+    - skip indexes that no require no backfill(scpb.Element, scpb.Element)($prev, $next)
     - joinTargetNode($prev, $prev-Target, $prev-Node)
     - joinTargetNode($next, $next-Target, $next-Node)
 - name: 'SecondaryIndex transitions to PUBLIC uphold 2-version invariant: WRITE_ONLY->VALIDATED'
@@ -7024,6 +7112,7 @@ deprules
     - $descriptor-data-Node[CurrentStatus] = PUBLIC
     - $descriptor-data[DescID] = $descID
     - descriptorIsDataNotBeingAdded-25.4($descID)
+    - skip indexes that no require no backfill(scpb.Element, scpb.Element)($prev, $next)
     - joinTargetNode($prev, $prev-Target, $prev-Node)
     - joinTargetNode($next, $next-Target, $next-Node)
 - name: 'TableSchemaLocked transitions to ABSENT uphold 2-version invariant: PUBLIC->ABSENT'
@@ -9065,6 +9154,20 @@ deprules
     - $referenced-column-name-Node[CurrentStatus] = TRANSIENT_ABSENT
     - joinTargetNode($constraint, $constraint-Target, $constraint-Node)
     - joinTargetNode($referenced-column-name, $referenced-column-name-Target, $referenced-column-name-Node)
+- name: old column name is dropped before new column name is added
+  from: old-column-name-Node
+  kind: Precedence
+  to: new-column-name-Node
+  query:
+    - $old-column-name[Type] = '*scpb.ColumnName'
+    - $new-column-name[Type] = '*scpb.ColumnName'
+    - joinOnColumnID($old-column-name, $new-column-name, $table-id, $col-id)
+    - $old-column-name-Target[TargetStatus] = ABSENT
+    - $old-column-name-Node[CurrentStatus] = ABSENT
+    - $new-column-name-Target[TargetStatus] = PUBLIC
+    - $new-column-name-Node[CurrentStatus] = PUBLIC
+    - joinTargetNode($old-column-name, $old-column-name-Target, $old-column-name-Node)
+    - joinTargetNode($new-column-name, $new-column-name-Target, $new-column-name-Node)
 - name: old index absent before new index public when swapping with transient
   from: old-primary-index-Node
   kind: Precedence
@@ -9085,6 +9188,49 @@ deprules
     - $new-primary-index-Node[CurrentStatus] = PUBLIC
     - joinTargetNode($old-primary-index, $old-primary-index-Target, $old-primary-index-Node)
     - joinTargetNode($new-primary-index, $new-primary-index-Target, $new-primary-index-Node)
+- name: old secondary indexes that have been recreated should be removed when their replacement is usable.
+  from: new-primary-index-Node
+  kind: SameStagePrecedence
+  to: old-secondary-index-Node
+  query:
+    - $old-secondary-index[Type] = '*scpb.PrimaryIndex'
+    - $new-primary-index[Type] = '*scpb.SecondaryIndex'
+    - joinOnDescID($new-primary-index, $old-secondary-index, $table-id)
+    - $new-primary-index-Target[TargetStatus] = ABSENT
+    - $new-primary-index-Node[CurrentStatus] = VALIDATED
+    - $old-secondary-index-Target[TargetStatus] = PUBLIC
+    - $old-secondary-index-Node[CurrentStatus] = PUBLIC
+    - $new-index[RecreateTargetIndexID] = $new-primary-index-id
+    - $old-secondary-index[IndexID] = $new-primary-index-id
+    - only apply to secondary indexes created after 25.4(*scpb.PrimaryIndex, *scpb.SecondaryIndex)($new-primary-index, $old-secondary-index)
+    - $new-primary-index[Type] = '*scpb.SecondaryIndex'
+    - $new-index[Type] = '*scpb.SecondaryIndex'
+    - $new-primary-index-Target[TargetStatus] = ABSENT
+    - $new-index-Target[TargetStatus] IN [PUBLIC, TRANSIENT_ABSENT]
+    - joinOnDescID($new-primary-index, $new-index, $table-id)
+    - $new-index[IndexID] = $index-id
+    - $new-primary-index[IndexID] = $old-index-id
+    - $new-index[RecreateSourceIndexID] = $old-index-id
+    - joinTargetNode($new-primary-index, $new-primary-index-Target, $new-primary-index-Node)
+    - joinTargetNode($new-index, $new-index-Target, $new-index-Node)
+    - joinTargetNode($new-primary-index, $new-primary-index-Target, $new-primary-index-Node)
+    - joinTargetNode($old-secondary-index, $old-secondary-index-Target, $old-secondary-index-Node)
+- name: old table namespace is dropped before new table namespace is added
+  from: old-namespace-Node
+  kind: Precedence
+  to: new-namespace-Node
+  query:
+    - $old-namespace[Type] = '*scpb.Namespace'
+    - $new-namespace[Type] = '*scpb.Namespace'
+    - $old-namespace[Type] = $same-type
+    - $new-namespace[Type] = $same-type
+    - joinOnDescID($old-namespace, $new-namespace, $desc-id)
+    - $old-namespace-Target[TargetStatus] = ABSENT
+    - $old-namespace-Node[CurrentStatus] = ABSENT
+    - $new-namespace-Target[TargetStatus] = PUBLIC
+    - $new-namespace-Node[CurrentStatus] = PUBLIC
+    - joinTargetNode($old-namespace, $old-namespace-Target, $old-namespace-Node)
+    - joinTargetNode($new-namespace, $new-namespace-Target, $new-namespace-Node)
 - name: policy dependents are swapped in order
   from: drop-policy-dependent-Node
   kind: Precedence
@@ -9424,15 +9570,15 @@ deprules
     - $index-Node[CurrentStatus] = VALIDATED
     - $index-name-Node[CurrentStatus] = PUBLIC
     - $old-index[Type] = '*scpb.SecondaryIndex'
-    - $new-index[Type] = '*scpb.SecondaryIndex'
+    - $index[Type] = '*scpb.SecondaryIndex'
     - $old-index-Target[TargetStatus] = ABSENT
-    - $new-index-Target[TargetStatus] IN [PUBLIC, TRANSIENT_ABSENT]
-    - joinOnDescID($old-index, $new-index, $table-id)
-    - $new-index[IndexID] = $index-id
+    - $index-Target[TargetStatus] IN [PUBLIC, TRANSIENT_ABSENT]
+    - joinOnDescID($old-index, $index, $table-id)
+    - $index[IndexID] = $index-id
     - $old-index[IndexID] = $old-index-id
-    - $new-index[RecreateSourceIndexID] = $old-index-id
+    - $index[RecreateSourceIndexID] = $old-index-id
     - joinTargetNode($old-index, $old-index-Target, $old-index-Node)
-    - joinTargetNode($new-index, $new-index-Target, $new-index-Node)
+    - joinTargetNode($index, $index-Target, $index-Node)
     - joinTargetNode($index, $index-Target, $index-Node)
     - joinTargetNode($index-name, $index-name-Target, $index-name-Node)
 - name: secondary index named before validation (without index swap)

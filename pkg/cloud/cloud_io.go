@@ -100,7 +100,7 @@ func MakeHTTPClient(
 	if err != nil {
 		return nil, err
 	}
-	return MakeHTTPClientForTransport(maybeAddLogging(t))
+	return MakeHTTPClientForTransport(t)
 }
 
 // MakeHTTPClientForTransport creates a new http.Client with the given
@@ -146,6 +146,7 @@ func MakeTransport(
 	if config.HttpMiddleware != nil {
 		roundTripper = config.HttpMiddleware(roundTripper)
 	}
+	roundTripper = maybeAddLogging(roundTripper)
 	return roundTripper, nil
 }
 
@@ -454,7 +455,7 @@ func WriteFile(ctx context.Context, dest ExternalStorage, basename string, src i
 	_, err = io.Copy(w, src)
 	if err != nil {
 		cancel()
-		return errors.CombineErrors(w.Close(), err)
+		return errors.CombineErrors(err, w.Close())
 	}
 	return errors.Wrap(w.Close(), "closing object")
 }

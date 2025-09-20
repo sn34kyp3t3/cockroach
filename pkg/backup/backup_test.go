@@ -144,7 +144,7 @@ func TestBackupRestoreStatementResult(t *testing.T) {
 	// have been stored in the GZip compressed format.
 	t.Run("GZipBackupManifest", func(t *testing.T) {
 		backupDir := fmt.Sprintf("%s/foo", dir)
-		backupManifestFile := backupDir + backupPath + "/" + backupbase.BackupManifestName
+		backupManifestFile := backupDir + backupPath + "/" + backupbase.DeprecatedBackupManifestName
 		backupManifestBytes, err := os.ReadFile(backupManifestFile)
 		if err != nil {
 			t.Fatal(err)
@@ -668,7 +668,7 @@ func TestBackupRestoreAppend(t *testing.T) {
 	// Find the backup times in the collection and try RESTORE'ing to each, and
 	// within each also check if we can restore to individual times captured with
 	// incremental backups that were appended to that backup.
-	fullBackup1, fullBackup2 := findFullBackupPaths(tmpDir, path.Join(tmpDir, "*/*/*/"+backupbase.BackupManifestName))
+	fullBackup1, fullBackup2 := findFullBackupPaths(tmpDir, path.Join(tmpDir, "*/*/*/"+backupbase.DeprecatedBackupManifestName))
 
 	sqlDB.Exec(t, "DROP DATABASE data CASCADE")
 	sqlDB.Exec(t, "RESTORE DATABASE data FROM $4 IN ($1, $2, $3) AS OF SYSTEM TIME "+tsBefore,
@@ -730,7 +730,7 @@ func TestBackupAndRestoreJobDescription(t *testing.T) {
 	sqlDB.ExpectErr(
 		t,
 		fmt.Sprintf(
-			`No full backup exists in "%s" to append an incremental backup to. To take a full backup, remove the subdirectory from the backup command`,
+			`No full backup exists in "%s" to append an incremental backup to`,
 			nonExistentFullDir,
 		),
 		"BACKUP INTO $4 IN ($1, $2, $3)", append(collections, nonExistentFullDir)...,
@@ -740,7 +740,7 @@ func TestBackupAndRestoreJobDescription(t *testing.T) {
 	sqlDB.Exec(t, "BACKUP INTO ($1, $2, $3) AS OF SYSTEM TIME '-1s'", collections...)
 
 	// Find the subdirectory created by the full BACKUP INTO statement.
-	matches, err := filepath.Glob(path.Join(tmpDir, "full/*/*/*/"+backupbase.BackupManifestName))
+	matches, err := filepath.Glob(path.Join(tmpDir, "full/*/*/*/"+backupbase.DeprecatedBackupManifestName))
 	require.NoError(t, err)
 	require.Equal(t, 2, len(matches))
 	for i := range matches {
@@ -1759,22 +1759,26 @@ func TestBackupRestoreResume(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				backupDir := dir + "/backup" + "-" + item.testName
+				collectionURI := fmt.Sprintf("nodelocal://1/%s", item.testName)
+				subdir := time.Now().Format(backupbase.DateBasedIntoFolderName)
 
-				if err := os.MkdirAll(backupDir+item.checkpointDirectory, 0755); err != nil {
+				checkpointDir := path.Join(dir, item.testName, subdir, item.checkpointDirectory)
+				if err := os.MkdirAll(checkpointDir, 0755); err != nil {
 					t.Fatal(err)
 				}
-				checkpointFile := backupDir + item.checkpointDirectory + "/" + backupinfo.BackupManifestCheckpointName
+				checkpointFile := path.Join(checkpointDir, backupinfo.BackupManifestCheckpointName)
 				if err := os.WriteFile(checkpointFile, mockManifest, 0644); err != nil {
 					t.Fatal(err)
 				}
-				uri := "nodelocal://1/backup" + "-" + item.testName
 				createAndWaitForJob(
 					t, sqlDB, []descpb.ID{backupTableDesc.GetID()},
 					jobspb.BackupDetails{
+						Destination: jobspb.BackupDetails_Destination{
+							Subdir: subdir,
+						},
 						EndTime:       srv.Clock().Now(),
-						CollectionURI: uri,
-						URI:           uri,
+						CollectionURI: collectionURI,
+						URI:           fmt.Sprintf("%s%s", collectionURI, subdir),
 					},
 					jobspb.BackupProgress{},
 					roachpb.Version{},
@@ -1782,7 +1786,7 @@ func TestBackupRestoreResume(t *testing.T) {
 
 				// If the backup properly took the (incorrect) checkpoint into account, it
 				// won't have tried to re-export any keys within backupCompletedSpan.
-				backupManifestFile := backupDir + "/" + backupbase.BackupManifestName
+				backupManifestFile := path.Join(dir, item.testName, subdir, backupbase.DeprecatedBackupManifestName)
 				backupManifestBytes, err := os.ReadFile(backupManifestFile)
 				if err != nil {
 					t.Fatal(err)
@@ -3514,8 +3518,7 @@ func TestBackupAsOfSystemTime(t *testing.T) {
 				equalDir,
 				beforeTs))
 
-		sqlDB.ExpectErr(t, "A full backup already exists in .* Consider running an incremental backup"+
-			" to this full backup via `BACKUP INTO ",
+		sqlDB.ExpectErr(t, "pq: a full backup already exists in .*",
 			fmt.Sprintf(`BACKUP DATABASE data INTO '%s' AS OF SYSTEM TIME %s`, equalDir,
 				equalTs))
 	}
@@ -3603,9 +3606,11 @@ func TestRestoreAsOfSystemTime(t *testing.T) {
 	sqlDB.Exec(t, `ALTER TABLE data.bank ADD COLUMN points_balance INT DEFAULT 50`)
 	sqlDB.QueryRow(t, `SELECT cluster_logical_timestamp()`).Scan(&ts[5])
 
+	sqlDB.Exec(t, "ALTER TABLE data.bank SET (schema_locked=false)")
 	sqlDB.Exec(t, `TRUNCATE TABLE data.bank`)
 	sqlDB.Exec(t, `TRUNCATE TABLE data.bank`)
 	sqlDB.Exec(t, `TRUNCATE TABLE data.bank`)
+	sqlDB.Exec(t, "ALTER TABLE data.bank SET (schema_locked=true)")
 	sqlDB.Exec(t, `CREATE TABLE other.sometable AS SELECT * FROM data.sometable`)
 	sqlDB.Exec(t, `DROP TABLE data.sometable`)
 	sqlDB.Exec(t, `CREATE INDEX ON data.teller (name)`)
@@ -3613,7 +3618,9 @@ func TestRestoreAsOfSystemTime(t *testing.T) {
 	sqlDB.Exec(t, `INSERT INTO data.teller VALUES (2, 'craig')`)
 	sqlDB.QueryRow(t, `SELECT cluster_logical_timestamp()`).Scan(&ts[6])
 
+	sqlDB.Exec(t, "ALTER TABLE data.bank SET (schema_locked=false)")
 	sqlDB.Exec(t, `TRUNCATE TABLE data.bank`)
+	sqlDB.Exec(t, "ALTER TABLE data.bank SET (schema_locked=true)")
 	sqlDB.Exec(t, `INSERT INTO data.bank VALUES (2, 2), (4, 4)`)
 	sqlDB.Exec(t, `DROP TABLE other.sometable`)
 	sqlDB.QueryRow(t, `SELECT cluster_logical_timestamp()`).Scan(&ts[7])
@@ -3992,7 +3999,7 @@ func TestBackupRestoreChecksum(t *testing.T) {
 
 	var backupManifest backuppb.BackupManifest
 	{
-		backupManifestBytes, err := os.ReadFile(filepath.Join(dir, backupPath, backupbase.BackupManifestName))
+		backupManifestBytes, err := os.ReadFile(filepath.Join(dir, backupPath, backupbase.DeprecatedBackupManifestName))
 		if err != nil {
 			t.Fatalf("%+v", err)
 		}
@@ -4053,6 +4060,10 @@ func TestNonLinearChain(t *testing.T) {
 
 	sqlDB := sqlutils.MakeSQLRunner(tc.Conns[0])
 
+	// This ensures a determenistic behavior to the relative number of files we
+	// open during a restore when skipping a backup.
+	sqlDB.Exec(t, `SET CLUSTER SETTING backup.index.read.enabled = true`)
+
 	// Make a table with a row in it and make a full backup of it.
 	sqlDB.Exec(t, `CREATE TABLE t (a INT PRIMARY KEY)`)
 	sqlDB.Exec(t, `INSERT INTO t VALUES (0)`)
@@ -4106,15 +4117,14 @@ func TestNonLinearChain(t *testing.T) {
 
 	// Restore the same thing -- t2 -- we did before but now with the extra inc
 	// spur hanging out in the chain. This should produce the same result, and we
-	// would like it to only open two extra file2 to do so -- the manifest that
-	// includes the timestamps that then show it is not needed by the restore, and
-	// the checksum for said manifest.
+	// would like it to only open one extra file to do so, just the index of the
+	// incremental to show that it is not needed by the restore.
 	sqlDB.Exec(t, `DROP TABLE t`)
 	openedBefore = tc.Servers[0].MustGetSQLCounter("cloud.readers_opened")
 	sqlDB.Exec(t, `RESTORE TABLE defaultdb.t FROM LATEST IN $1`, localFoo)
 	sqlDB.CheckQueryResults(t, `SELECT * FROM t`, [][]string{{"0"}, {"1"}, {"2"}})
 	openedB := tc.Servers[0].MustGetSQLCounter("cloud.readers_opened") - openedBefore
-	require.Equal(t, openedA+2, openedB)
+	require.Equal(t, openedA+1, openedB)
 
 	// Finally, make sure we can restore from the tip of the spur, not just the
 	// tip of the chain.
@@ -5037,7 +5047,9 @@ func TestBackupRestoreIncrementalTruncateTable(t *testing.T) {
 	sqlDB.Exec(t, `INSERT INTO data.t VALUES ('before')`)
 	sqlDB.Exec(t, `BACKUP DATABASE data INTO $1`, full)
 	sqlDB.Exec(t, `UPDATE data.t SET s = 'after'`)
+	sqlDB.Exec(t, "ALTER TABLE data.t SET (schema_locked=false)")
 	sqlDB.Exec(t, `TRUNCATE data.t`)
+	sqlDB.Exec(t, "ALTER TABLE data.t SET (schema_locked=true)")
 
 	sqlDB.Exec(t, "BACKUP DATABASE data INTO $1", full)
 }
@@ -6672,6 +6684,9 @@ INSERT INTO baz.bar VALUES (110, 'a'), (210, 'b'), (310, 'c'), (410, 'd'), (510,
 func TestBackupRestoreInsideTenant(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
+
+	skip.UnderRace(t, "runs slow under race, ~10+ mins")
+
 	const numAccounts = 1
 
 	makeTenant := func(srv serverutils.TestServerInterface, tenant uint64) (*sqlutils.SQLRunner, func()) {
@@ -6714,23 +6729,21 @@ func TestBackupRestoreInsideTenant(t *testing.T) {
 	defer cleanupT11C2()
 
 	t.Run("tenant-backup", func(t *testing.T) {
-		// This test uses this mock HTTP server to pass the backup files between tenants.
-		httpAddr, httpServerCleanup := makeInsecureHTTPServer(t)
-		defer httpServerCleanup()
+		const collectionURI = "nodelocal://1/tenant-backup"
 
-		tenant10.Exec(t, `BACKUP INTO $1`, httpAddr)
+		tenant10.Exec(t, `BACKUP INTO $1`, collectionURI)
 
 		t.Run("cluster-restore", func(t *testing.T) {
 			t.Run("into-same-tenant-id", func(t *testing.T) {
-				tenant10C2.Exec(t, `RESTORE FROM LATEST IN $1`, httpAddr)
+				tenant10C2.Exec(t, `RESTORE FROM LATEST IN $1`, collectionURI)
 				tenant10C2.CheckQueryResults(t, `SELECT * FROM foo.bar`, tenant10.QueryStr(t, `SELECT * FROM foo.bar`))
 			})
 			t.Run("into-different-tenant-id", func(t *testing.T) {
-				tenant11C2.Exec(t, `RESTORE FROM LATEST IN $1`, httpAddr)
+				tenant11C2.Exec(t, `RESTORE FROM LATEST IN $1`, collectionURI)
 				tenant11C2.CheckQueryResults(t, `SELECT * FROM foo.bar`, tenant10.QueryStr(t, `SELECT * FROM foo.bar`))
 			})
 			t.Run("into-system-tenant-id", func(t *testing.T) {
-				systemDB2.Exec(t, `RESTORE FROM LATEST IN $1`, httpAddr)
+				systemDB2.Exec(t, `RESTORE FROM LATEST IN $1`, collectionURI)
 				systemDB2.CheckQueryResults(t, `SELECT * FROM foo.bar`, tenant10.QueryStr(t, `SELECT * FROM foo.bar`))
 			})
 		})
@@ -6738,28 +6751,26 @@ func TestBackupRestoreInsideTenant(t *testing.T) {
 		t.Run("database-restore", func(t *testing.T) {
 			t.Run("into-same-tenant-id", func(t *testing.T) {
 				tenant10.Exec(t, `CREATE DATABASE foo2`)
-				tenant10.Exec(t, `RESTORE TABLE foo.bar FROM LATEST IN $1 WITH into_db='foo2'`, httpAddr)
+				tenant10.Exec(t, `RESTORE TABLE foo.bar FROM LATEST IN $1 WITH into_db='foo2'`, collectionURI)
 				tenant10.CheckQueryResults(t, `SELECT * FROM foo2.bar`, tenant10.QueryStr(t, `SELECT * FROM foo.bar`))
 			})
 			t.Run("into-different-tenant-id", func(t *testing.T) {
 				tenant11.Exec(t, `CREATE DATABASE foo`)
-				tenant11.Exec(t, `RESTORE TABLE foo.bar FROM LATEST IN $1`, httpAddr)
+				tenant11.Exec(t, `RESTORE TABLE foo.bar FROM LATEST IN $1`, collectionURI)
 				tenant11.CheckQueryResults(t, `SELECT * FROM foo.bar`, tenant10.QueryStr(t, `SELECT * FROM foo.bar`))
 			})
 			t.Run("into-system-tenant-id", func(t *testing.T) {
 				systemDB.Exec(t, `CREATE DATABASE foo2`)
-				systemDB.Exec(t, `RESTORE TABLE foo.bar FROM LATEST IN $1 WITH into_db='foo2'`, httpAddr)
+				systemDB.Exec(t, `RESTORE TABLE foo.bar FROM LATEST IN $1 WITH into_db='foo2'`, collectionURI)
 				systemDB.CheckQueryResults(t, `SELECT * FROM foo2.bar`, tenant10.QueryStr(t, `SELECT * FROM foo.bar`))
 			})
 		})
 	})
 
 	t.Run("system-backup", func(t *testing.T) {
-		// This test uses this mock HTTP server to pass the backup files between tenants.
-		httpAddr, httpServerCleanup := makeInsecureHTTPServer(t)
-		defer httpServerCleanup()
+		const collectionURI = "nodelocal://1/system-backup"
 
-		systemDB.Exec(t, `BACKUP INTO $1 WITH include_all_virtual_clusters`, httpAddr)
+		systemDB.Exec(t, `BACKUP INTO $1 WITH include_all_virtual_clusters`, collectionURI)
 
 		tenant20C2, cleanupT20C2 := makeTenant(srv2, 20)
 		defer cleanupT20C2()
@@ -6767,8 +6778,7 @@ func TestBackupRestoreInsideTenant(t *testing.T) {
 		t.Run("cluster-restore", func(t *testing.T) {
 			// Now restore a cluster backup taken from a system tenant that
 			// hasn't created any tenants.
-			httpAddrEmpty, cleanupEmptyHTTPServer := makeInsecureHTTPServer(t)
-			defer cleanupEmptyHTTPServer()
+			const emptyCollectionURI = "nodelocal://1/empty-system-backup"
 
 			_, emptySystemDB, cleanupEmptyCluster := backupRestoreTestSetupEmpty(t, singleNode,
 				dir, InitManualReplication, base.TestClusterArgs{
@@ -6778,13 +6788,13 @@ func TestBackupRestoreInsideTenant(t *testing.T) {
 				})
 			defer cleanupEmptyCluster()
 
-			emptySystemDB.Exec(t, `BACKUP INTO $1`, httpAddrEmpty)
-			tenant20C2.Exec(t, `RESTORE FROM LATEST IN $1`, httpAddrEmpty)
+			emptySystemDB.Exec(t, `BACKUP INTO $1`, emptyCollectionURI)
+			tenant20C2.Exec(t, `RESTORE FROM LATEST IN $1`, emptyCollectionURI)
 		})
 
 		t.Run("database-restore-into-tenant", func(t *testing.T) {
 			tenant10.Exec(t, `CREATE DATABASE data`)
-			tenant10.Exec(t, `RESTORE TABLE data.bank FROM LATEST IN $1`, httpAddr)
+			tenant10.Exec(t, `RESTORE TABLE data.bank FROM LATEST IN $1`, collectionURI)
 			systemDB.CheckQueryResults(t, `SELECT * FROM data.bank`, tenant10.QueryStr(t, `SELECT * FROM data.bank`))
 		})
 
@@ -6810,9 +6820,8 @@ func TestBackupRestoreTenantSettings(t *testing.T) {
 	_ = securitytest.EmbeddedTenantIDs()
 
 	systemDB.Exec(t, `ALTER TENANT ALL SET CLUSTER SETTING sql.notices.enabled = false`)
-	backup2HttpAddr, backup2Cleanup := makeInsecureHTTPServer(t)
-	defer backup2Cleanup()
-	systemDB.Exec(t, `BACKUP INTO $1`, backup2HttpAddr)
+	const collectionURI = "nodelocal://1/backup"
+	systemDB.Exec(t, `BACKUP INTO $1`, collectionURI)
 
 	_, systemDB2, cleanupDB2 := backupRestoreTestSetupEmpty(t, singleNode, dir, InitManualReplication, base.TestClusterArgs{
 		ServerArgs: base.TestServerArgs{
@@ -6821,7 +6830,7 @@ func TestBackupRestoreTenantSettings(t *testing.T) {
 	})
 	defer cleanupDB2()
 	t.Run("cluster-restore-into-cluster-with-tenant-settings-succeeds", func(t *testing.T) {
-		systemDB2.Exec(t, `RESTORE FROM LATEST IN $1`, backup2HttpAddr)
+		systemDB2.Exec(t, `RESTORE FROM LATEST IN $1`, collectionURI)
 		systemDB2.CheckQueryResults(t, `SELECT * FROM system.tenant_settings`, systemDB.QueryStr(t, `SELECT * FROM system.tenant_settings`))
 	})
 }
@@ -6888,51 +6897,47 @@ func TestBackupRestoreInsideMultiPodTenant(t *testing.T) {
 	tenant10[0].Exec(t, `CREATE DATABASE foo; CREATE TABLE foo.bar(i int primary key); INSERT INTO foo.bar VALUES (110), (210), (310)`)
 
 	t.Run("tenant-backup", func(t *testing.T) {
-		// This test uses this mock HTTP server to pass the backup files between tenants.
-		httpAddr, httpServerCleanup := makeInsecureHTTPServer(t)
-		defer httpServerCleanup()
+		const collectionURI = "nodelocal://1/tenant-backup"
 
-		tenant10[0].Exec(t, `BACKUP INTO $1`, httpAddr)
+		tenant10[0].Exec(t, `BACKUP INTO $1`, collectionURI)
 
 		t.Run("cluster-restore", func(t *testing.T) {
 			t.Run("into-same-tenant-id", func(t *testing.T) {
-				tenant10C2[0].Exec(t, `RESTORE FROM LATEST IN $1`, httpAddr)
+				tenant10C2[0].Exec(t, `RESTORE FROM LATEST IN $1`, collectionURI)
 				tenant10C2[0].CheckQueryResults(t, `SELECT * FROM foo.bar`, tenant10[0].QueryStr(t, `SELECT * FROM foo.bar`))
 			})
 			t.Run("into-different-tenant-id", func(t *testing.T) {
-				tenant11C2.Exec(t, `RESTORE FROM LATEST IN $1`, httpAddr)
+				tenant11C2.Exec(t, `RESTORE FROM LATEST IN $1`, collectionURI)
 				tenant11C2.CheckQueryResults(t, `SELECT * FROM foo.bar`, tenant10[0].QueryStr(t, `SELECT * FROM foo.bar`))
 			})
 			t.Run("into-system-tenant-id", func(t *testing.T) {
-				systemDB2.Exec(t, `RESTORE FROM LATEST IN $1`, httpAddr)
+				systemDB2.Exec(t, `RESTORE FROM LATEST IN $1`, collectionURI)
 			})
 		})
 
 		t.Run("database-restore", func(t *testing.T) {
 			t.Run("into-same-tenant-id", func(t *testing.T) {
 				tenant10[0].Exec(t, `CREATE DATABASE foo2`)
-				tenant10[0].Exec(t, `RESTORE TABLE foo.bar FROM LATEST IN $1 WITH into_db='foo2'`, httpAddr)
+				tenant10[0].Exec(t, `RESTORE TABLE foo.bar FROM LATEST IN $1 WITH into_db='foo2'`, collectionURI)
 				tenant10[0].CheckQueryResults(t, `SELECT * FROM foo2.bar`, tenant10[0].QueryStr(t, `SELECT * FROM foo.bar`))
 			})
 			t.Run("into-different-tenant-id", func(t *testing.T) {
 				tenant11[0].Exec(t, `CREATE DATABASE foo`)
-				tenant11[0].Exec(t, `RESTORE TABLE foo.bar FROM LATEST IN $1`, httpAddr)
+				tenant11[0].Exec(t, `RESTORE TABLE foo.bar FROM LATEST IN $1`, collectionURI)
 				tenant11[0].CheckQueryResults(t, `SELECT * FROM foo.bar`, tenant10[0].QueryStr(t, `SELECT * FROM foo.bar`))
 			})
 			t.Run("into-system-tenant-id", func(t *testing.T) {
 				systemDB.Exec(t, `CREATE DATABASE foo2`)
-				systemDB.Exec(t, `RESTORE TABLE foo.bar FROM LATEST IN $1 WITH into_db='foo2'`, httpAddr)
+				systemDB.Exec(t, `RESTORE TABLE foo.bar FROM LATEST IN $1 WITH into_db='foo2'`, collectionURI)
 				systemDB.CheckQueryResults(t, `SELECT * FROM foo2.bar`, tenant10[0].QueryStr(t, `SELECT * FROM foo.bar`))
 			})
 		})
 	})
 
 	t.Run("system-backup", func(t *testing.T) {
-		// This test uses this mock HTTP server to pass the backup files between tenants.
-		httpAddr, httpServerCleanup := makeInsecureHTTPServer(t)
-		defer httpServerCleanup()
+		const collectionURI = "nodelocal://1/system-backup"
 
-		systemDB.Exec(t, `BACKUP INTO $1 WITH include_all_virtual_clusters`, httpAddr)
+		systemDB.Exec(t, `BACKUP INTO $1 WITH include_all_virtual_clusters`, collectionURI)
 
 		tenant20C2, cleanupT20C2 := makeTenant(srv2, 20, false)
 		defer cleanupT20C2()
@@ -6940,8 +6945,7 @@ func TestBackupRestoreInsideMultiPodTenant(t *testing.T) {
 		t.Run("cluster-restore", func(t *testing.T) {
 			// Now restore a cluster backup taken from a system tenant that
 			// hasn't created any tenants.
-			httpAddrEmpty, cleanupEmptyHTTPServer := makeInsecureHTTPServer(t)
-			defer cleanupEmptyHTTPServer()
+			const emptyCollectionURI = "nodelocal://1/empty-system-backup"
 
 			_, emptySystemDB, cleanupEmptyCluster := backupRestoreTestSetupEmpty(t, singleNode,
 				dir, InitManualReplication, base.TestClusterArgs{
@@ -6951,13 +6955,13 @@ func TestBackupRestoreInsideMultiPodTenant(t *testing.T) {
 				})
 			defer cleanupEmptyCluster()
 
-			emptySystemDB.Exec(t, `BACKUP INTO $1`, httpAddrEmpty)
-			tenant20C2.Exec(t, `RESTORE FROM LATEST IN $1`, httpAddrEmpty)
+			emptySystemDB.Exec(t, `BACKUP INTO $1`, emptyCollectionURI)
+			tenant20C2.Exec(t, `RESTORE FROM LATEST IN $1`, emptyCollectionURI)
 		})
 
 		t.Run("database-restore-into-tenant", func(t *testing.T) {
 			tenant10[0].Exec(t, `CREATE DATABASE data`)
-			tenant10[0].Exec(t, `RESTORE TABLE data.bank FROM LATEST IN $1`, httpAddr)
+			tenant10[0].Exec(t, `RESTORE TABLE data.bank FROM LATEST IN $1`, collectionURI)
 			systemDB.CheckQueryResults(t, `SELECT * FROM data.bank`, tenant10[0].QueryStr(t, `SELECT * FROM data.bank`))
 		})
 	})
@@ -8451,7 +8455,6 @@ func TestIncorrectAccessOfFilesInBackupMetadata(t *testing.T) {
 
 	_, sqlDB, rawDir, cleanupFn := backupRestoreTestSetup(t, singleNode, 1, InitManualReplication)
 	defer cleanupFn()
-	sqlDB.Exec(t, `SET CLUSTER SETTING backup.write_metadata_with_external_ssts.enabled=true`)
 	sqlDB.Exec(t, `CREATE DATABASE r1`)
 	sqlDB.Exec(t, `CREATE TABLE r1.foo ( id INT PRIMARY KEY)`)
 	sqlDB.Exec(t, `INSERT INTO r1.foo VALUES (1)`)
@@ -8497,7 +8500,6 @@ func TestRestoringAcrossVersions(t *testing.T) {
 	tc, sqlDB, rawDir, cleanupFn := backupRestoreTestSetup(t, singleNode, 1, InitManualReplication)
 	defer cleanupFn()
 
-	sqlDB.Exec(t, `SET CLUSTER SETTING backup.write_metadata_with_external_ssts.enabled=true`)
 	sqlDB.Exec(t, `CREATE DATABASE r1`)
 
 	sqlDB.Exec(t, `BACKUP DATABASE r1 INTO 'nodelocal://1/cross_version'`)
@@ -8610,7 +8612,6 @@ func TestManifestBitFlip(t *testing.T) {
 	defer leaktest.AfterTest(t)()
 	defer log.Scope(t).Close(t)
 	_, sqlDB, rawDir, cleanupFn := backupRestoreTestSetup(t, singleNode, 1, InitManualReplication)
-	sqlDB.Exec(t, `SET CLUSTER SETTING backup.write_metadata_with_external_ssts.enabled=true`)
 	defer cleanupFn()
 	sqlDB.Exec(t, `CREATE DATABASE r1; CREATE DATABASE r2; CREATE DATABASE r3;`)
 	const checksumError = "checksum mismatch"
@@ -10417,7 +10418,7 @@ func TestBackupDoNotIncludeViewSpans(t *testing.T) {
 	// Read the backup manifest.
 	var backupManifest backuppb.BackupManifest
 	{
-		backupManifestBytes, err := os.ReadFile(filepath.Join(dir, "foo", res[0][0], backupbase.BackupManifestName))
+		backupManifestBytes, err := os.ReadFile(filepath.Join(dir, "foo", res[0][0], backupbase.DeprecatedBackupManifestName))
 		if err != nil {
 			t.Fatalf("%+v", err)
 		}

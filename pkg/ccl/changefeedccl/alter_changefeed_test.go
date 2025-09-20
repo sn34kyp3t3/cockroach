@@ -317,7 +317,7 @@ func TestAlterChangefeedAddTargetAfterInitialScan(t *testing.T) {
 				t.Fatalf("unknown initial scan type %q", initialScan)
 			}
 
-			sqlDB.QueryRow(t, `INSERT INTO foo VALUES(2)`)
+			sqlDB.Exec(t, `INSERT INTO foo VALUES(2)`)
 			assertPayloads(t, testFeed, []string{
 				`foo: [2]->{"after": {"a": 2}}`,
 			})
@@ -1273,7 +1273,8 @@ func TestAlterChangefeedAlterTableName(t *testing.T) {
 
 		expectResolvedTimestamp(t, testFeed)
 
-		waitForSchemaChange(t, sqlDB, `ALTER TABLE movr.users RENAME TO movr.riders`)
+		sqlDB.Exec(t, `ALTER TABLE movr.users RENAME TO movr.riders`)
+		sqlDB.CheckQueryResultsRetry(t, "SELECT count(*) FROM [SHOW TABLES FROM movr] WHERE table_name = 'riders'", [][]string{{"1"}})
 
 		var tsLogical string
 		sqlDB.QueryRow(t, `SELECT cluster_logical_timestamp()`).Scan(&tsLogical)
@@ -1524,13 +1525,7 @@ func TestAlterChangefeedAddTargetsDuringBackfill(t *testing.T) {
 			defer rndMu.Unlock()
 
 			if r.Span.Equal(fooTableSpan) {
-				// Do not emit resolved events for the entire table span.
-				// We "simulate" large table by splitting single table span into many parts, so
-				// we want to resolve those sub-spans instead of the entire table span.
-				// However, we have to emit something -- otherwise the entire changefeed
-				// machine would not work.
-				r.Span.EndKey = fooTableSpan.Key.Next()
-				return false, nil
+				return true, nil
 			}
 			if haveGaps {
 				return rndMu.rnd.Intn(10) > 7, nil
@@ -1882,7 +1877,7 @@ func TestAlterChangefeedAccessControl(t *testing.T) {
 		})
 		// jobController can access the job, but will hit an error re-creating the changefeed.
 		asUser(t, f, `jobController`, func(userDB *sqlutils.SQLRunner) {
-			userDB.ExpectErr(t, "pq: user jobcontroller requires the CHANGEFEED privilege on all target tables to be able to run an enterprise changefeed", fmt.Sprintf(`ALTER CHANGEFEED %d DROP table_b`, currentFeed.JobID()))
+			userDB.ExpectErr(t, `pq: user "jobcontroller" requires the CHANGEFEED privilege on all target tables to be able to run an enterprise changefeed`, fmt.Sprintf(`ALTER CHANGEFEED %d DROP table_b`, currentFeed.JobID()))
 		})
 		asUser(t, f, `userWithSomeGrants`, func(userDB *sqlutils.SQLRunner) {
 			userDB.ExpectErr(t, "does not have privileges for job", fmt.Sprintf(`ALTER CHANGEFEED %d ADD table_b`, currentFeed.JobID()))
@@ -1946,7 +1941,7 @@ func TestAlterChangefeedAddDropSameTarget(t *testing.T) {
 		sqlDB.Exec(t, fmt.Sprintf(`ALTER CHANGEFEED %d ADD bar DROP bar`, feed.JobID()))
 		require.NoError(t, feed.Resume())
 		var tsStr string
-		sqlDB.QueryRow(t, `INSERT INTO bar VALUES(1)`)
+		sqlDB.Exec(t, `INSERT INTO bar VALUES(1)`)
 		sqlDB.QueryRow(t, `INSERT INTO foo VALUES(2) RETURNING cluster_logical_timestamp()`).Scan(&tsStr)
 		ts := parseTimeToHLC(t, tsStr)
 		require.NoError(t, feed.WaitForHighWaterMark(ts))

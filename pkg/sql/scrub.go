@@ -156,7 +156,7 @@ func (n *scrubNode) Close(ctx context.Context) {
 // the database. Views are skipped without errors.
 func (n *scrubNode) startScrubDatabase(ctx context.Context, p *planner, name *tree.Name) error {
 	if p.extendedEvalCtx.SessionData().EnableScrubJob {
-		return errors.Errorf("SCRUB DATABASE not supported with enable_scrub_job")
+		return errors.New("SCRUB DATABASE not supported with enable_scrub_job")
 	}
 
 	// Check that the database exists.
@@ -217,13 +217,21 @@ func (n *scrubNode) startScrubDatabase(ctx context.Context, p *planner, name *tr
 func (n *scrubNode) startScrubTable(
 	ctx context.Context, p *planner, tableDesc catalog.TableDescriptor, tableName *tree.TableName,
 ) error {
-	if p.extendedEvalCtx.SessionData().EnableScrubJob {
-		return n.runScrubTableJob(ctx, p, tableDesc)
-	}
-
 	ts, hasTS, err := p.getTimestamp(ctx, n.n.AsOf)
 	if err != nil {
 		return err
+	}
+
+	if p.extendedEvalCtx.SessionData().EnableScrubJob {
+		if !p.extendedEvalCtx.TxnIsSingleStmt {
+			return pgerror.Newf(pgcode.InvalidTransactionState,
+				"cannot run within a multi-statement transaction")
+		}
+		if !hasTS {
+			return pgerror.Newf(pgcode.Syntax,
+				"SCRUB with inspect jobs requires AS OF SYSTEM TIME")
+		}
+		return n.runScrubTableJob(ctx, p, tableDesc, ts)
 	}
 	// Process SCRUB options. These are only present during a SCRUB TABLE
 	// statement.
@@ -466,20 +474,41 @@ func createConstraintCheckOperations(
 }
 
 func (n *scrubNode) runScrubTableJob(
-	ctx context.Context, p *planner, tableDesc catalog.TableDescriptor,
+	ctx context.Context, p *planner, tableDesc catalog.TableDescriptor, asOf hlc.Timestamp,
 ) error {
 	// Consistency check is done async via a job.
-	jobID := p.ExecCfg().JobRegistry.MakeJobID()
+	jobID, err := TriggerInspectJob(ctx, tree.Serialize(n.n), p.ExecCfg(), tableDesc, asOf)
+	if err != nil {
+		return err
+	}
+	// Let the eval context track this job ID for status and error reporting.
+	p.extendedEvalCtx.jobs.addCreatedJobID(jobID)
+	return nil
+}
+
+// TriggerInspectJob starts an inspect job for the snapshot.
+func TriggerInspectJob(
+	ctx context.Context,
+	jobRecordDescription string,
+	execCfg *ExecutorConfig,
+	tableDesc catalog.TableDescriptor,
+	asOf hlc.Timestamp,
+) (jobspb.JobID, error) {
+	// Consistency check is done async via a job.
+	jobID := execCfg.JobRegistry.MakeJobID()
 
 	// TODO(148300): just grab the first secondary index and use that for the
 	// consistency check.
+	// TODO(148365): When INSPECT is added, we want to skip unsupported indexes
+	// and return a NOTICE.
 	secIndexes := tableDesc.PublicNonPrimaryIndexes()
 	if len(secIndexes) == 0 {
-		return errors.AssertionFailedf("must have at least one secondary index")
+		return jobID, errors.AssertionFailedf("must have at least one secondary index")
 	}
 
+	// TODO(sql-queries): add row count check when that is implemented.
 	jr := jobs.Record{
-		Description: tree.Serialize(n.n),
+		Description: jobRecordDescription,
 		Details: jobspb.InspectDetails{
 			Checks: []*jobspb.InspectDetails_Check{
 				{
@@ -488,6 +517,7 @@ func (n *scrubNode) runScrubTableJob(
 					IndexID: secIndexes[0].GetID(),
 				},
 			},
+			AsOf: asOf,
 		},
 		Progress:      jobspb.InspectProgress{},
 		CreatedBy:     nil,
@@ -495,28 +525,20 @@ func (n *scrubNode) runScrubTableJob(
 		DescriptorIDs: descpb.IDs{tableDesc.GetID()},
 	}
 
-	if !p.extendedEvalCtx.TxnIsSingleStmt {
-		return pgerror.Newf(pgcode.InvalidTransactionState,
-			"cannot run within a multi-statement transaction")
-	}
-
 	var sj *jobs.StartableJob
-	if err := p.ExecCfg().InternalDB.Txn(ctx, func(ctx context.Context, txn isql.Txn) (err error) {
-		return p.ExecCfg().JobRegistry.CreateStartableJobWithTxn(ctx, &sj, jobID, txn, jr)
+	if err := execCfg.InternalDB.Txn(ctx, func(ctx context.Context, txn isql.Txn) (err error) {
+		return execCfg.JobRegistry.CreateStartableJobWithTxn(ctx, &sj, jobID, txn, jr)
 	}); err != nil {
 		if sj != nil {
 			if cleanupErr := sj.CleanupOnRollback(ctx); cleanupErr != nil {
 				log.Dev.Warningf(ctx, "failed to cleanup StartableJob: %v", cleanupErr)
 			}
 		}
-		return err
+		return jobID, err
 	}
-
-	log.Dev.Infof(ctx, "created and started inspect job %d (no-op)", jobID)
+	log.Dev.Infof(ctx, "created and started inspect job %d", jobID)
 	if err := sj.Start(ctx); err != nil {
-		return err
+		return jobID, err
 	}
-	// Let the eval context track this job ID for status and error reporting.
-	p.extendedEvalCtx.jobs.addCreatedJobID(jobID)
-	return nil
+	return jobID, nil
 }

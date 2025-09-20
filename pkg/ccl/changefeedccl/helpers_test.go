@@ -117,15 +117,15 @@ func readNextMessages(
 			return nil, ctx.Err()
 		}
 		if log.V(1) {
-			log.Dev.Infof(context.Background(), "about to read a message (%d out of %d)", len(actual), numMessages)
+			log.Changefeed.Infof(context.Background(), "about to read a message (%d out of %d)", len(actual), numMessages)
 		}
 		m, err := f.Next()
 		if log.V(1) {
 			if m != nil {
-				log.Dev.Infof(context.Background(), `msg %s: %s->%s (%s) (%s)`,
+				log.Changefeed.Infof(context.Background(), `msg %s: %s->%s (%s) (%s)`,
 					m.Topic, m.Key, m.Value, m.Resolved, timeutil.Since(lastMessage))
 			} else {
-				log.Dev.Infof(context.Background(), `err %v`, err)
+				log.Changefeed.Infof(context.Background(), `err %v`, err)
 			}
 		}
 		lastMessage = timeutil.Now()
@@ -359,7 +359,7 @@ func assertPayloadsBaseErr(
 	}()
 
 	if log.V(1) {
-		log.Dev.Infof(ctx, "expected messages: \n%s", strings.Join(expected, "\n"))
+		log.Changefeed.Infof(ctx, "expected messages: \n%s", strings.Join(expected, "\n"))
 	}
 
 	actual, err := readNextMessages(ctx, f, len(expected))
@@ -938,6 +938,7 @@ func requireNoFeedsFail(t *testing.T) (fn updateKnobsFn) {
 		`connection reset by peer`,
 		`knobs.RaiseRetryableError`,
 		`test error`,
+		`context canceled`,
 	}
 	shouldIgnoreErr := func(err error) bool {
 		if err == nil || errors.Is(err, context.Canceled) {
@@ -1627,6 +1628,12 @@ func createUserWithDefaultPrivilege(
 		_, err = rootDB.Exec(fmt.Sprintf(`ALTER DEFAULT PRIVILEGES GRANT %s ON TABLES TO %s`, priv, user))
 		if err != nil {
 			t.Fatal(err)
+		}
+		if priv == "CHANGEFEED" {
+			_, err = rootDB.Exec(fmt.Sprintf(`GRANT %s ON DATABASE d TO %s`, priv, user))
+			if err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 }

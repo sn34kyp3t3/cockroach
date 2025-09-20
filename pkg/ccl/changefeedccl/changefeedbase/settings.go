@@ -207,6 +207,16 @@ var ProtectTimestampInterval = settings.RegisterDurationSetting(
 	settings.PositiveDuration,
 	settings.WithPublic)
 
+// ProtectTimestampBucketingInterval controls the amount a table is allowed to lag behind the
+// most advanced table before a per-table protected timestamp record is created
+var ProtectTimestampBucketingInterval = settings.RegisterDurationSetting(
+	settings.ApplicationLevel,
+	"changefeed.protect_timestamp_bucketing_interval",
+	"controls the amount a table is allowed to lag behind the most advanced table before a per-table protected timestamp record is created; "+
+		"only used when changefeed.protected_timestamp.per_table.enabled is true",
+	2*time.Minute,
+	settings.PositiveDuration)
+
 // ProtectTimestampLag controls how much the protected timestamp record should lag behind the high watermark
 var ProtectTimestampLag = settings.RegisterDurationSetting(
 	settings.ApplicationLevel,
@@ -214,6 +224,15 @@ var ProtectTimestampLag = settings.RegisterDurationSetting(
 	"controls how far behind the checkpoint the changefeed's protected timestamp is",
 	10*time.Minute,
 	settings.PositiveDuration)
+
+// PerTableProtectedTimestamps enables per-table protected timestamp records
+// instead of a single record for all tables in a changefeed.
+var PerTableProtectedTimestamps = settings.RegisterBoolSetting(
+	settings.ApplicationLevel,
+	"changefeed.protected_timestamp.per_table.enabled",
+	"if true, creates separate protected timestamp records for each table in a changefeed; "+
+		"if false, uses a single protected timestamp record for all tables",
+	metamorphic.ConstantWithTestBool("changefeed.protected_timestamp.per_table.enabled", true))
 
 // MaxProtectedTimestampAge controls the frequency of protected timestamp record updates
 var MaxProtectedTimestampAge = settings.RegisterDurationSetting(
@@ -400,4 +419,16 @@ var TrackPerTableProgress = settings.RegisterBoolSetting(
 		"granular saving/restoring of progress, which will reduce duplicates during restarts, "+
 		"but doing so may incur additional overhead during ordinary changefeed execution",
 	metamorphic.ConstantWithTestBool("changefeed.progress.per_table_tracking.enabled", true),
+)
+
+// FrontierPersistenceInterval configures the minimum amount of time that must
+// elapse before a changefeed will persist its entire span frontier again.
+var FrontierPersistenceInterval = settings.RegisterDurationSettingWithExplicitUnit(
+	settings.ApplicationLevel,
+	"changefeed.progress.frontier_persistence.interval",
+	"minimum amount of time that must elapse before a changefeed "+
+		"will persist its entire span frontier again",
+	30*time.Second, /* defaultValue */
+	settings.DurationInRange(5*time.Second, 10*time.Minute),
+	settings.WithPublic,
 )

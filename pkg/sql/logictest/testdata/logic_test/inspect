@@ -20,12 +20,12 @@ subtest end
 subtest scrub_job_implicit_txn
 
 statement ok
-EXPERIMENTAL SCRUB TABLE t1;
+EXPERIMENTAL SCRUB TABLE t1 AS OF SYSTEM TIME '-1us';
 
 query TTB
 SELECT description, status, finished IS NOT NULL AS finished FROM [SHOW JOBS] WHERE job_type = 'INSPECT' ORDER BY created DESC LIMIT 1
 ----
-EXPERIMENTAL SCRUB TABLE t1  succeeded  true
+EXPERIMENTAL SCRUB TABLE t1 AS OF SYSTEM TIME '-1us'  succeeded  true
 
 subtest end
 
@@ -51,5 +51,59 @@ subtest cleanup
 
 statement ok
 DROP TABLE t1;
+
+subtest end
+
+# inspect and scrub are converging so for now tests on INSPECT live here
+subtest inspect
+
+statement ok
+CREATE TABLE foo (c1 INT);
+
+statement error INSPECT TABLE requires the enable_inspect_command setting to be enabled
+INSPECT TABLE foo;
+
+statement error INSPECT DATABASE requires the enable_inspect_command setting to be enabled
+INSPECT DATABASE test;
+
+statement ok
+SET enable_inspect_command = true;
+
+statement ok
+INSPECT TABLE foo;
+
+statement ok
+INSPECT TABLE foo WITH OPTIONS INDEX (bar.public.biz);
+
+statement ok
+INSPECT TABLE foo AS OF SYSTEM TIME 1 WITH OPTIONS INDEX (bar,biz);
+
+# test permissions
+statement ok
+CREATE USER testuser2;
+
+user testuser2
+
+statement error pq: user testuser2 does not have INSPECT privilege
+INSPECT TABLE foo;
+
+statement error pq: user testuser2 does not have INSPECT privilege
+INSPECT DATABASE test;
+
+user root
+
+statement ok
+GRANT SYSTEM INSPECT TO testuser2;
+
+user testuser2
+
+statement ok
+SET enable_inspect_command = true;
+
+statement ok
+INSPECT TABLE foo;
+
+statement ok
+INSPECT DATABASE test;
 
 subtest end

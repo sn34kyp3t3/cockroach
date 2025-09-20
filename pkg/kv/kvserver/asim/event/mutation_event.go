@@ -8,7 +8,9 @@ package event
 import (
 	"context"
 	"fmt"
+	"strings"
 
+	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/asim/config"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/asim/state"
 	"github.com/cockroachdb/cockroach/pkg/kv/kvserver/liveness/livenesspb"
 	"github.com/cockroachdb/cockroach/pkg/roachpb"
@@ -73,19 +75,63 @@ func (se SetSpanConfigEvent) Func() EventFunc {
 }
 
 func (se SetSpanConfigEvent) String() string {
-	return fmt.Sprintf("set span config event with span=%v, config=%v", se.Span, &se.Config)
+	var buf strings.Builder
+	voter, nonvoter := se.Config.GetNumVoters(), se.Config.GetNumNonVoters()
+	var nonvoterStr string
+	if nonvoter != 0 {
+		nonvoterStr = fmt.Sprintf(",%dnonvoters", nonvoter)
+	}
+	_, _ = fmt.Fprintf(&buf, "[%s,%s): %dvoters%s", se.Span.Key, se.Span.EndKey, voter, nonvoterStr)
+
+	printConstraint := func(tag string, constraints []roachpb.ConstraintsConjunction) {
+		if len(constraints) != 0 {
+			_, _ = fmt.Fprintf(&buf, "%s", tag)
+			for _, c := range constraints {
+				_, _ = fmt.Fprintf(&buf, "{%d:", c.NumReplicas)
+				for j, constraint := range c.Constraints {
+					_, _ = fmt.Fprintf(&buf, "%s=%s", constraint.Key, constraint.Value)
+					if j != len(c.Constraints)-1 {
+						_, _ = fmt.Fprintf(&buf, ",")
+					}
+				}
+				_, _ = fmt.Fprintf(&buf, "}")
+			}
+			_, _ = fmt.Fprintf(&buf, "]")
+		}
+	}
+	printConstraint(" [replicas:", se.Config.Constraints)
+	printConstraint(" [voters:", se.Config.VoterConstraints)
+	if len(se.Config.LeasePreferences) != 0 {
+		_, _ = fmt.Fprint(&buf, " [lease:")
+		for i, lp := range se.Config.LeasePreferences {
+			_, _ = fmt.Fprint(&buf, "{")
+			for j, c := range lp.Constraints {
+				_, _ = fmt.Fprintf(&buf, "%s=%s", c.Key, c.Value)
+				if j != len(lp.Constraints)-1 {
+					_, _ = fmt.Fprintf(&buf, ",")
+				}
+			}
+			_, _ = fmt.Fprintf(&buf, "}")
+			if i != len(se.Config.LeasePreferences)-1 {
+				_, _ = fmt.Fprintf(&buf, ">")
+			}
+		}
+		_, _ = fmt.Fprint(&buf, "]")
+	}
+	noQuotesBuf := strings.ReplaceAll(buf.String(), "\"", "")
+	return noQuotesBuf
 }
 
 func (ae AddNodeEvent) Func() EventFunc {
 	return MutationFunc(func(ctx context.Context, s state.State) {
-		node := s.AddNode()
+		// TDOO(wenyihu6): should we change AddNode to take in
+		var locality roachpb.Locality
 		if ae.LocalityString != "" {
-			var locality roachpb.Locality
 			if err := locality.Set(ae.LocalityString); err != nil {
 				panic(fmt.Sprintf("unable to set node locality %s", err.Error()))
 			}
-			s.SetNodeLocality(node.NodeID(), locality)
 		}
+		node := s.AddNode(config.DefaultNodeCPURateCapacityNanos, locality)
 		for i := 0; i < ae.NumStores; i++ {
 			if _, ok := s.AddStore(node.NodeID()); !ok {
 				panic(fmt.Sprintf("adding store to node=%d failed", node))
@@ -95,7 +141,12 @@ func (ae AddNodeEvent) Func() EventFunc {
 }
 
 func (ae AddNodeEvent) String() string {
-	return fmt.Sprintf("add node event with num_of_stores=%d, locality_string=%s", ae.NumStores, ae.LocalityString)
+	var buf strings.Builder
+	_, _ = fmt.Fprintf(&buf, "add node with %d stores", ae.NumStores)
+	if ae.LocalityString != "" {
+		_, _ = fmt.Fprintf(&buf, ", locality_string=%s", ae.LocalityString)
+	}
+	return buf.String()
 }
 
 func (sne SetNodeLivenessEvent) Func() EventFunc {
@@ -108,7 +159,7 @@ func (sne SetNodeLivenessEvent) Func() EventFunc {
 }
 
 func (sne SetNodeLivenessEvent) String() string {
-	return fmt.Sprintf("set node liveness event with nodeID=%d, liveness_status=%v", sne.NodeId, sne.LivenessStatus)
+	return fmt.Sprintf("set n%d to %v", sne.NodeId, sne.LivenessStatus)
 }
 
 func (sce SetCapacityOverrideEvent) Func() EventFunc {
@@ -119,7 +170,7 @@ func (sce SetCapacityOverrideEvent) Func() EventFunc {
 }
 
 func (sce SetCapacityOverrideEvent) String() string {
-	return fmt.Sprintf("set capacity override event with storeID=%d, capacity_override=%v", sce.StoreID, sce.CapacityOverride)
+	return fmt.Sprintf("override s%d capacity to %v", sce.StoreID, sce.CapacityOverride)
 }
 
 func (sne SetNodeLocalityEvent) Func() EventFunc {
@@ -150,5 +201,5 @@ func (se SetSimulationSettingsEvent) Func() EventFunc {
 }
 
 func (se SetSimulationSettingsEvent) String() string {
-	return fmt.Sprintf("set simulation settings event with key=%s, value=%v", se.Key, se.Value)
+	return fmt.Sprintf("set %s to %v", se.Key, se.Value)
 }

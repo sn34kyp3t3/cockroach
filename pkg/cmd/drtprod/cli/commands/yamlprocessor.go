@@ -17,12 +17,14 @@ import (
 	"sync"
 	"time"
 
+	"github.com/alessio/shellescape"
 	"github.com/cockroachdb/cockroach/pkg/cmd/drtprod/helpers"
 	"github.com/cockroachdb/cockroach/pkg/cmd/roachprod/cli"
 	"github.com/cockroachdb/cockroach/pkg/roachprod"
 	"github.com/cockroachdb/cockroach/pkg/roachprod/config"
 	"github.com/cockroachdb/cockroach/pkg/roachprod/install"
 	"github.com/cockroachdb/cockroach/pkg/util/syncutil"
+	"github.com/cockroachdb/cockroach/pkg/util/timeutil"
 	"github.com/cockroachdb/errors"
 	"github.com/spf13/cobra"
 	"golang.org/x/exp/maps"
@@ -305,7 +307,8 @@ func setupAndExecute(
 	// the DD_API_KEY is added to environment
 	ddAPIKey := os.Getenv("DD_API_KEY")
 	if ddAPIKey != "" {
-		envArg = fmt.Sprintf(" --setenv=DD_API_KEY=%s", ddAPIKey)
+		// Escape shell metacharacters to prevent command injection
+		envArg = fmt.Sprintf(" --setenv=DD_API_KEY=%s", shellescape.Quote(ddAPIKey))
 	}
 	// Prepare the systemd command to execute the drtprod binary.
 	executeArgs := fmt.Sprintf(
@@ -556,7 +559,7 @@ func executeCommands(ctx context.Context, logPrefix string, cmds []*command) err
 			fmt.Printf("[%s] Waiting for %d seconds\n", logPrefix, cmd.waitBefore)
 			time.Sleep(time.Duration(cmd.waitBefore) * time.Second)
 		}
-		fmt.Printf("[%s] Starting <%v>\n", logPrefix, cmd)
+		fmt.Printf("[%s] [%d] Starting <%v>\n", logPrefix, timeutil.Now().UTC().Unix(), cmd)
 		err := commandExecutor(ctx, logPrefix, cmd.name, cmd.args...)
 		if err != nil {
 			if !cmd.continueOnFailure {
@@ -566,7 +569,7 @@ func executeCommands(ctx context.Context, logPrefix string, cmds []*command) err
 			// Log the failure and continue if configured to do so
 			fmt.Printf("[%s] Failed <%v>, Error Ignored: %v\n", logPrefix, cmd, err)
 		} else {
-			fmt.Printf("[%s] Completed <%v>\n", logPrefix, cmd)
+			fmt.Printf("[%s] [%d] Completed <%v>\n", logPrefix, timeutil.Now().UTC().Unix(), cmd)
 			if cmd.waitAfter > 0 {
 				fmt.Printf("[%s] Waiting for %d seconds\n", logPrefix, cmd.waitAfter)
 				time.Sleep(time.Duration(cmd.waitAfter) * time.Second)
